@@ -1,83 +1,262 @@
+import logging
+
 from ..poperators import transformer
-from ..pbase import PipeChain
+from ..pbase import PipeChain, Sink, Transformer
 
-from functools import partial
-from threading import Lock
+from threading import Thread
+from queue import Queue as ThreadingQueue, Full as ThreadingQueueFull, Empty as ThreadingQueueEmpty
+from multiprocessing import Process, cpu_count
+from multiprocessing.queues import Queue as ProcessingQueue, Full as ProcessingQueueFull, Empty as ProcessingQueueEmpty
 
-from multiprocessing.pool import ThreadPool, Pool
 
-#
+class WorkerQuit(BaseException):
+    pass
+
+
+class ProducerThread(Thread):
+    def __init__(self, poll_interval, in_q, precords, workers):
+        super().__init__(daemon=True)
+        self.poll_interval = poll_interval
+        self.in_q = in_q
+        self.precords = precords
+        self.raised_exception = None
+        self.workers = workers
+        self.asked_to_quit = False
+
+    def run(self):
+        in_q, precords = self.in_q, self.precords
+        try:
+            for precord in precords:
+                while True:
+                    if self.asked_to_quit:
+                        raise WorkerQuit
+                    try:
+                        in_q.put(precord, timeout=self.poll_interval)
+                        break
+                    except (ThreadingQueueFull, ProcessingQueueFull):
+                        pass
+        except WorkerQuit:
+            pass
+        except Exception as exc:
+            self.raised_exception = exc
+            self.ask_quit(None)
+        except KeyboardInterrupt:
+            self.ask_quit("KeyboardInterrupt")
+
+    def ask_quit(self, reason=None):
+        self.asked_to_quit = True
+        self._signal_workers_to_quit()
+
+    def _signal_workers_to_quit(self):
+        for worker in self.workers:
+            worker.interrupt(reason)
+
+
+class SourceFromProducerInWorker(Source):
+    def __init__(self, owner: "Worker"):
+        self.owner = owner
+
+    def generate_precords(self, our):
+        in_q = self.owner.in_q
+        poll_interval = self.owner.poll_interval
+        while True:
+            self.owner._check_interrupt()
+            try:
+                obj = in_q.get(timeout=poll_interval)
+                if obj is not None:
+                    yield obj
+            except (ThreadingQueueEmpty, ProcessingQueueEmpty):
+                pass
+
+
+class Worker:
+    def __init__(self, *,
+                 poll_interval,
+                 ignore_error, error_logger,
+                 name, our, target_chain,
+                 in_q, out_q, ctl_in_q, ctl_out_q):
+        self.poll_interval = poll_interval
+        self.ignore_error = ignore_error
+        self.error_logger = error_logger
+        self.name = name
+        self.our = our
+        self.target_chain = target_chain
+
+        # in_q     -> Process/Thread(target=<Worker>) -> out_q
+        # ctl_in_q ->                                 -> ctl_out_q (Control queue)
+        self.in_q = in_q
+        self.out_q = out_q
+
+        # Just setting 'done' flag is not enough; processes don't share memory
+        # We need another channel to control workers
+        self.ctl_in_q = ctl_in_q
+        self.ctl_out_q = ctl_out_q
+
+
+    def run(self):
+        target_chain = SourceFromProducerInWorker(self) >> self.target_chain
+
+        try:
+            for precord in target_chain.execute(our):
+                while True:
+                    self._check_interrupt()
+                    try:
+                        self.out_q.put(precord, timeout=self.poll_interval)
+                        break
+                    except (ThreadingQueueFull, ProcessingQueueFull):
+                        pass
+        except WorkerQuit:
+            self._notify_parent_done()
+        except Exception as exc:
+            self.error_logger("Error raised in {}".format(name))
+            self._ask_parent_raise(exc)
+        finally:
+            self._notify_parent_done()
+
+    def _ask_parent_raise(self, exc):
+        if not self.ignore_error:
+            self.ctl_out_q.put((False, exc))
+            self.out_q.put(None)
+
+    def _notify_parent_done(self):
+        self.ctl_out_q.put((True, None))
+        self.out_q.put(None)
+
+    def _check_interrupt(self):
+        try:
+            self.ctl_in_q.get_nowait()
+            raise WorkerQuit
+        except (ThreadingQueueEmpty, ProcessingQueueEmpty):
+            pass
+
+    # should be called by producer or main thread
+    def interrupt(self, reason=None):
+        self.ctl_in_q.put(reason or True)
+
+    # should be called by main thread
+    def pop_done_state(self):
+        if not self.ctl_out_q.empty():
+            success, exc = self.ctl_out_q.get_nowait()
+            if not success:
+                # Reraise
+                raise exc
+            return True
+        return False
+
+
 # Fork-Join Model
-#
-
-
-def execute_on_worker(target, our, precord):
-    # TODO
-    p > target.execute(our)
-
 class base_fork_join(pipe):
-    def __init__(self, target: PipeChain, num_workers=None, shared_pool=False, unordered=True):
-        self.target = target
-        self.num_workers = num_workers
-        self.shared_pool = shared_pool
-        self.unordered = unordered
+    queue_class = None
+    process_class = None
 
-    def _get_pool(self):
-        raise NotImplementedError
+    def __init__(self,
+                 target_chain: PipeChain,
+                 num_workers=None,
+                 chunk_size=1,
+                 ignore_error=False,
+                 poll_interval=2.0,
+                 error_logger=logging.error):
+        if not isinstance(target, (Sink, Transformer)):
+            raise TypeError("{!r} not sink or transformer".format(target))
+        self.target_chain = target_chain
+        self.num_workers = num_workers or cpu_count()
+        self.chunk_size = chunk_size
+        self.ignore_error = ignore_error
+        self.poll_interval = poll_interval
+        self.error_logger = error_logger
 
-    def _close_pool(self, pool):
-        pool.close()
+    def _run_workers(self, our):
+        in_q, out_q = self.queue_class(self.chunk_size), self.queue_class(self.chunk_size)
+        workers = []
+        for index in range(self.num_workers):
+            name = self.get_worker_name(index)
+            workers.append(
+                Worker(
+                    ignore_error=self.ignore_error,
+                    error_logger=self.error_logger,
+                    target_chain=self.target_chain,
+                    name=name,
+                    our=our,
+                    in_q=in_q,
+                    out_q=out_q,
+                    ctl_in_q=self.queue_class(0),
+                    ctl_out_q=self.queue_class(0),
+                )
+            )
+
+        processes = []
+        for worker in workers:
+            process = self.process_class(target=worker.run, daemon=True)
+            process.start()
+            processes.append(process)
+        return workers, in_q, out_q
+
+    def _run_producer(self, precords, workers, in_q):
+        producer = ProducerThread(self.poll_interval, in_q, precords, workers)
+        producer.start()
+        return producer
+
+    def _run_consumer(self, workers, out_q):
+        workers_not_done = set(workers)
+        while workers_not_done:
+            precord = out_q.get()
+            if precord is not None:
+                yield precord
+            else:
+                done_workers = set()
+                for worker in workers_not_done:
+                    if worker.pop_done_state():
+                        done_workers.add(worker)
+                workers_not_done -= done_workers
+
+        if producer_exception is not None:
+            raise producer_exception
 
     def transform(self, our, precords):
-        fn = partial(execute_on_worker, self.target, our)
-        pool = self._get_pool()
+        # [ producer thread ] => [ worker threads/processes ] => [ consumer(this thread) ]
+        workers, in_q, out_q = self._run_workers(our)
+        producer = self._run_producer(precords, workers, in_q)
         try:
-            if self.unordered:
-                yield from pool.imap_unordered(precords, )
-            else:
-                yield from pool.imap( )
+            yield from self._run_consumer(workers, out_q)
         finally:
-            self._close_pool(pool)
+            producer.ask_quit()
 
-class multithread(base_fork_join):
-    shared_thread_pool = None
-    lock = Lock()
+        if producer.raised_exception is not None:
+            raise producer.raised_exception
 
-    def _get_pool(self):
-        cls = self.__class__
-        if self.shared_pool:
-            with cls.lock:
-                if cls.shared_thread_pool is None:
-                    cls.shared_thread_pool = ThreadPool(self.num_workers)
-                return cls.shared_thread_pool
-        else:
-            return ThreadPool(self.num_workers)
+    def get_worker_name(self, index: int):
+        return "Worker[{}]".format(index)
 
 
+class threaded(base_fork_join):
+    queue_class = ThreadingQueue
+    process_class = Thread
 
-class multiprocess(base_fork_join):
-    shared_process_pool = None
-    lock = Lock()
-
-    def _get_pool(self):
-        cls = self.__class__
-        if self.shared_pool:
-            with cls.lock:
-                if cls.shared_thread_pool is None:
-                    cls.shared_thread_pool = Pool(self.num_workers)
-                return cls.shared_thread_pool
-        else:
-            return Pool(
-            self.num_workers,
+    def get_worker_name(self, index: int):
+        return "WorkerThread[{}]".format(index)
 
 
+class parallel(base_fork_join):
+    queue_class = ProcessingQueue
+    process_class = Process
+
+    def get_worker_name(self, index: int):
+        return "WorkerProcess[{}]".format(index)
 
 
-class base_background_worker(pipe):
-    pass
+class on_bg_thread(threaded):
+    def __init__(self, **kwargs):
+        kwargs['num_workers'] = 1
+        super().__init__(**kwargs)
 
-class on_thread(base_background_worker):
-    pass
+    def get_worker_name(self, index: int):
+        return "BackgroundWorkerThread"
 
-class on_process(base_background_worker):
-    pass
+
+class on_bg_process(parallel):
+    def __init__(self, **kwargs):
+        kwargs['num_workers'] = 1
+        super().__init__(**kwargs)
+
+    def get_worker_name(self, index: int):
+        return "BackgroundWorkerProcess"

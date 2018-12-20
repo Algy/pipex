@@ -11,22 +11,19 @@ class load_text(pipe_map):
 
             with open(file_name) as f:
                 text = f.read()
-            yield PRecord.
-
+            yield precord.with_channel("text").with_value(text)j
 
 class load_binary(pipe_map):
-    pass
-
-class load_image(pipe_map):
     def transform(self, precords):
-        import numpy
-        from PIL import Image
-
         for precord in precords:
-            ...
+            file_name = precord.value
 
+            with open(file_name, "rb") as f:
+                bin = f.read()
+            yield precord.with_channel("binary").with_value(bin)
 
 class glob(source):
+    channel_name = 'file_name'
     def __init__(self, pattern='*'):
         self.pattern = pattern
 

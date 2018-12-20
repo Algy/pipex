@@ -148,7 +148,7 @@ class PBucket(Source, Sink):
         return join(self.directory_name, "data")
 
     # load
-    def generate_precords(self) -> Iterator[PRecord]:
+    def generate_precords(self, our) -> Iterator[PRecord]:
         self._ensure_pbucket_dir()
         directory_name = self.directory_name
         data_directory_name = self.data_directory_name

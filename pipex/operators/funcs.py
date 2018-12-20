@@ -21,7 +21,7 @@ class channel(pipe):
     def __init__(self, channel_name):
         self.channel_name = channel_name
 
-    def transform(self, precords):
+    def transform(self, our, precords):
         channel_name = self.channel_name
         for precord in precords:
             yield precord.with_channel(channel_name)
@@ -31,7 +31,7 @@ class dup(pipe):
     def __init__(self, *names: str):
         self.names = names
 
-    def transform(self, precords):
+    def transform(self, our, precords):
         for precord in precords:
             value = precord.value
             yield precord.merge(*{
@@ -43,7 +43,7 @@ class batch(pipe):
     def __init__(self, batch_size: int):
         self.batch_size = batch_size
 
-    def transform(self, precords):
+    def transform(self, our, precords):
         it = iter(precords)
         while True:
             mini_batch = islice(precords, self.batch_size)
@@ -52,7 +52,7 @@ class batch(pipe):
 
 
 class unbatch(pipe):
-    def transform(self, precords):
+    def transform(self, our, precords):
         for precord in precords:
             unbatched = precord.value
             yield from unbatched
@@ -85,10 +85,31 @@ class slice(pipe):
     def __init__(self, *args):
         self.args = args
 
-    def transform(self, precords):
+    def transform(self, our, precords):
         return islice(precords, *args)
 
-class
+class grep(pipe_map):
+    def __init__(self, pattern=''):
+        self.pattern = pattern
+
+    def filter(self, value):
+        return self.pattern in str(value)
 
 
-p.map(fn, 1, ..., )
+def take(pipe):
+    def __init__(self, n):
+        self.n = n
+
+    def transform(self, our, precords):
+        return islice(precords, self.n)
+
+def drop(pipe_map):
+    def __init__(self, n):
+        self.n = n
+
+    def transform(self, our, precords):
+        n = self.n
+        for i, precord in enumerate(precords):
+            if i < n:
+                continue
+            yield precord
