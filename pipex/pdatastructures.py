@@ -1,8 +1,77 @@
 import time
 import numpy as np
 
+from PIL import Image
+from base64 import b64encode
 from functools import lru_cache
 from typing import Dict, Any
+from html import escape
+
+
+def repr_image(value):
+    buffer = value._repr_png_()
+    src = "data:image/png;base64," + b64encode(buffer).decode()
+    return "<img src='{}' style='width: 100%'>".format(src)
+
+def repr_atom(atom) -> str:
+    value = atom.value
+    if atom.format == 'image' and isinstance(value, np.ndarray):
+        try:
+            return repr_image(Image.fromarray(value))
+        except Exception as e:
+            pass
+    if hasattr(value, '_repr_png_'):
+        return repr_image(value)
+    if hasattr(value, '_repr_html_'):
+        return value._repr_html_()
+    return "<pre>" + escape(repr(atom.value)) + "</pre>"
+    
+def repr_channel(channel_name, atom, is_active) -> str:
+    content = repr_atom(atom)
+    return """
+    <tr>
+        <th>{}{}</th>
+        <td>{}</td>
+    </tr>
+    """.format(channel_name, "*" if is_active else "", repr_atom(atom))
+
+def _repr_html_(self):
+    channels = [self.active_channel]+ [chan for chan in self.channels if chan != self.active_channel]
+    prologue = '''
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe" style="width: 100%; table-layout: auto">
+  <thead>
+    <tr style="text-align: right;">
+      <th>channel</th>
+      <th>value</th>
+    </tr>
+  </thead>
+  <tbody>
+'''
+    epilogue = '''
+  </tbody>
+</table>
+</div>
+    '''
+    
+    content = "\n".join(
+        repr_channel(channel, self.get_atom(channel), channel == self.active_channel)
+        for channel in channels
+    )
+    return prologue + content + epilogue
 
 def _infer_format_from_type(channel_name: str, value: Any) -> str:
     if isinstance(value, np.ndarray):
@@ -152,3 +221,7 @@ class PRecord:
                 )
             }
         )
+
+
+    def _repr_html_(self):
+        return _repr_html_(self)
