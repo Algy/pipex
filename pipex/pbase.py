@@ -37,7 +37,7 @@ class We:
 
 # NOTE: All descendants of PipeChain should be designed to be immutable
 class PipeChain:
-    def __lrshift__(self, lhs):
+    def __rrshift__(self, lhs):
         # lhs(object that can be coerced to a Source) >> self
         return Source.coerce_source(lhs) >> self
 

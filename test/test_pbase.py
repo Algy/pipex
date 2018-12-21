@@ -3,7 +3,9 @@ import pytest
 from pipex.pbase import (
     Source, Transformer, Sink,
     TransformedSource, TransformerSequence,
-    TransformedSink, Pipeline
+    TransformedSink, Pipeline,
+    ListSourceSink, IterSource,
+    PrintSink,
 )
 
 class MySource(Source):
@@ -295,3 +297,24 @@ def test_nested_pipeline():
         assert pipeline.source.transformer.transformers == [tr1, tr2]
         assert pipeline.source.sink == sink
         assert pipeline.source.source == source
+
+def test_coersion():
+    tr_1 = MyTransformer1()
+    chain_1 = [1, 2, 3] >> tr_1
+    assert isinstance(chain_1, TransformedSource)
+    assert isinstance(chain_1.source, ListSourceSink)
+    assert chain_1.source.dest_list == [1,2,3]
+
+    chain_2 = tr_1 >> print
+    assert isinstance(chain_2, TransformedSink)
+    assert isinstance(chain_2.sink, PrintSink)
+    assert chain_2.transformer == tr_1
+
+
+    chain_3 = tr_1 >> []
+    assert isinstance(chain_3, TransformedSink)
+    assert isinstance(chain_3.sink, ListSourceSink)
+
+    chain_4 = [1,2,3] >> tr_1 >> [4,5,6]
+    chain_5 = iter([1,2,3]) >> tr_1 >> [4,5,6]
+    assert isinstance(chain_5.source, IterSource)
