@@ -140,7 +140,7 @@ class slice(pipe):
         self.args = args
 
     def transform(self, our, precords):
-        return islice(precords, *args)
+        return islice(precords, *self.args)
 
 
 class grep(pipe_map):
