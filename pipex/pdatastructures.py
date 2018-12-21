@@ -25,7 +25,7 @@ def repr_atom(atom) -> str:
     if hasattr(value, '_repr_html_'):
         return value._repr_html_()
     return "<pre>" + escape(repr(atom.value)) + "</pre>"
-    
+
 def repr_channel(channel_name, atom, is_active) -> str:
     content = repr_atom(atom)
     return """
@@ -66,7 +66,7 @@ def _repr_html_(self):
 </table>
 </div>
     '''
-    
+
     content = "\n".join(
         repr_channel(channel, self.get_atom(channel), channel == self.active_channel)
         for channel in channels
@@ -151,7 +151,8 @@ class PRecord:
 
     def select_channels(self, channels) -> "PRecord":
         channel_atoms = {
-            k: v for k, v in self.channel_atoms.items()
+            k: v
+            for k, v in self.channel_atoms.items()
             if k in channels
         }
         return PRecord(
@@ -221,6 +222,15 @@ class PRecord:
                 )
             }
         )
+
+    def __repr__(self):
+        return ("<PRecord id={!r} timestamp={!r} active_channel={!r} channels={!r}>"
+                .format(
+                    self.id,
+                    self.timestamp,
+                    self.active_channel,
+                    list(self.channels),
+                ))
 
 
     def _repr_html_(self):

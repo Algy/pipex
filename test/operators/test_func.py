@@ -8,6 +8,7 @@ from pipex.operators import (
     preload,
     dup,
     batch,
+    select_channels,
     unbatch,
     map,
     filter,
@@ -61,4 +62,10 @@ def test_batch():
     assert batches[0][1].value == 2
     assert batches[0][2].value == 3
     assert batches[1][0].value == 4
+
+
+def test_select_channels():
+    arr = [PRecord.from_object(1).merge(a=1, b=2, c=3)]
+    precord = list(arr >> select_channels("a", "c"))[0]
+    assert set(precord.channels) == set(["a", "c"])
 

@@ -271,7 +271,10 @@ class ListSourceSink(Source, Sink):
 
     def generate_precords(self, our: We) -> Iterator[PRecord]:
         for item in self.dest_list:
-            yield PRecord.from_object(item)
+            if isinstance(item, PRecord):
+                yield item
+            else:
+                yield PRecord.from_object(item)
 
     def process(self, our: We, tr_source: "TransformedSource") -> Iterator[PRecord]:
         dest_list = self.dest_list
@@ -286,7 +289,10 @@ class IterSource(Source):
 
     def generate_precords(self, our: We):
         for item in self.it:
-            yield PRecord.from_object(item)
+            if isinstance(item, PRecord):
+                yield item
+            else:
+                yield PRecord.from_object(item)
 
     def chain_hash(self) -> str:
         return pipex_hash("IterSource" + str(id(self.it)))

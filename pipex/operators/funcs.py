@@ -195,7 +195,7 @@ class select_channels(pipe):
     def transform(self, our, precords):
         channel_set = self._channel_set
         for precord in precords:
-            yield precord.select_channels(_channel_set)
+            yield precord.select_channels(channel_set)
 
 __all__ = (
     'done', 'constant', 'tap', 'channel', 'dup', 'preload',
