@@ -82,24 +82,18 @@ class base_curriable(pipe_map):
         self._curried_fn = self._curried()
 
     def _curried(self):
-        args = self.args
-        kwargs = self.kwargs
-        fn = self.fn
-        arg_position = self.arg_position
-
-        def simple_curry(x):
-            return fn(x, *args, **kwargs)
-
-        def insertion_curry(x):
-            my_args = list(args)
-            my_args.insert(arg_position, x)
-            return fn(*my_args, **kwargs)
-
         if self.arg_position == 0:
-            return simple_curry
+            return self._simple_curry
         else:
-            return insertion_curry
+            return self._insertion_curry
 
+    def _simple_curry(self, x):
+        return self.fn(x, *self.args, **self.kwargs)
+
+    def _insertion_curry(self, x):
+        my_args = list(self.args)
+        my_args.insert(self.arg_position, x)
+        return self.fn(*my_args, **self.kwargs)
 
 class tap(base_curriable):
     def map(self, value):

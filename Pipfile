@@ -5,8 +5,7 @@ name = "pypi"
 
 [packages]
 pillow = "*"
-numpy = "*"
-pyrsistent = "*"
+numpy = "==1.15.4"
 
 [dev-packages]
 pytest = "*"
@@ -14,6 +13,8 @@ pytest-cov = "*"
 pytest-mock = "*"
 mypy = "*"
 psutil = "*"
+pytest-profiling = "*"
+snakeviz = "*"
 
 [requires]
 python_version = "3.6"

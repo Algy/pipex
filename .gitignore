@@ -130,4 +130,7 @@ Session.vim
 # Auto-generated tag files
 tags
 # Persistent undo
+
+# Prpfiling data
+prof/
 [._]*.un~

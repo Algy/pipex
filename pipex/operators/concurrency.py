@@ -5,7 +5,7 @@ from ..pbase import PipeChain, Source, Sink, Transformer
 
 from threading import Thread
 from queue import Queue as ThreadingQueue, Full, Empty
-from multiprocessing import Process, cpu_count, Queue as ProcessingQueue
+from multiprocessing import Process, cpu_count, Queue as ProcessingQueue, get_context
 from typing import Optional, Type
 from itertools import islice
 
@@ -25,7 +25,8 @@ def close_queues(queues):
     for q in queues:
         safe_call(q, 'oin_thread')
 
-def _slice_chunk(precords, chunk_size):
+
+def _do_slice_chunk(precords, chunk_size):
     it = precords
     while True:
         chunk = list(islice(it, chunk_size))
@@ -33,6 +34,8 @@ def _slice_chunk(precords, chunk_size):
             break
         yield chunk
 
+def _slice_chunk(precords, chunk_size):
+    return _do_slice_chunk(precords, chunk_size)
 
 
 class ProducerThread(Thread):
@@ -46,22 +49,28 @@ class ProducerThread(Thread):
         self.workers = workers
         self.asked_to_quit = False
 
+
     def run(self):
+        logger = logging.getLogger("WorkerProducer")
         in_q, precords = self.in_q, self.precords
         try:
             for precord_chunk in _slice_chunk(precords, self.chunk_size):
                 while True:
                     if self.asked_to_quit:
+                        logger.debug("Someone asked me to quit quiting")
                         raise WorkerQuit
                     try:
+                        logger.debug("Adding precord")
                         in_q.put(precord_chunk, timeout=self.poll_interval)
                         break
                     except Full:
                         pass
+            logger.debug("All precords has been produced! Sending sentinels to workers")
             for _ in range(len(self.workers)):
                 in_q.put(None)
+            logger.debug("Sentinels produced!")
         except WorkerQuit:
-            pass
+            logger.debug("Worker Quit!")
         except Exception as exc:
             self.raised_exception = exc
             self.ask_quit(None)
@@ -120,8 +129,12 @@ class Worker:
         self.ctl_in_q = ctl_in_q
         self.ctl_out_q = ctl_out_q
 
+        # Only meaningful in main thread
+        self.is_done = False
 
     def run(self):
+        self.logger = logger = logging.getLogger(self.name)
+        logger.debug("Worker Started")
         try:
             for precord_chunk in _slice_chunk(self._generate(), self.chunk_size):
                 while True:
@@ -137,6 +150,7 @@ class Worker:
         except Exception as exc:
             self.error_logger("Error raised in {}".format(self.name))
             self._ask_parent_raise(exc)
+            raise
         finally:
             self._notify_parent_done()
 
@@ -147,6 +161,7 @@ class Worker:
 
     def _ask_parent_raise(self, exc):
         if not self.ignore_error:
+            print("PUT AERROR")
             self.ctl_out_q.put((False, exc))
             self.out_q.put(None)
 
@@ -167,14 +182,17 @@ class Worker:
 
     # should be called by main thread
     def pop_done_state(self):
-        if not self.ctl_out_q.empty():
+        if self.is_done:
+            return
+        try:
             success, exc = self.ctl_out_q.get_nowait()
+            self.is_done = True
             if not success:
                 # Reraise
                 raise exc
             return True
-        return False
-
+        except Empty:
+            return False
 
 # Fork-Join Model
 class base_fork_join(pipe):
@@ -184,7 +202,7 @@ class base_fork_join(pipe):
     def __init__(self,
                  target_chain: PipeChain,
                  num_workers=None,
-                 chunk_size=200,
+                 chunk_size=1,
                  queue_size=20,
                  ignore_error=False,
                  poll_interval=2.0,
@@ -227,7 +245,10 @@ class base_fork_join(pipe):
 
         processes = []
         for worker in workers:
-            process = self.process_class(target=worker.run, daemon=True)
+            process = self.process_class(
+                target=worker.run,
+                daemon=True,
+            )
             process.start()
             processes.append(process)
         return workers, processes, in_q, out_q
@@ -244,17 +265,27 @@ class base_fork_join(pipe):
         return producer
 
     def _run_consumer(self, workers, out_q):
-        workers_not_done = set(workers)
-        while workers_not_done or not out_q.empty():
+        N = len(workers)
+        num_done_workers = 0
+
+        while num_done_workers < N or not out_q.empty():
             precord_chunk = out_q.get()
             if precord_chunk is not None:
                 yield from precord_chunk
             else:
-                done_workers = set()
-                for worker in workers_not_done:
-                    if worker.pop_done_state():
-                        done_workers.add(worker)
-                workers_not_done -= done_workers
+                # flush all queues
+                num_done_workers += 1
+                for worker in workers:
+                    worker.pop_done_state()
+
+        # Flush remaining objects inside the out queue
+        try:
+            while True:
+                precord_chunk = out_q.get_nowait()
+                if precord_chunk is not None:
+                    yield from precord_chunk
+        except Empty:
+            pass
 
     def transform(self, our, precords):
         # [ producer thread ] => [ worker threads/processes ] => [ consumer(this thread) ]
@@ -264,10 +295,6 @@ class base_fork_join(pipe):
             yield from self._run_consumer(workers, out_q)
         finally:
             producer.ask_quit()
-            # let's not make zombie processes.
-            for proc in processes:
-                proc.join()
-
 
             # close all queues if possible
             queues = (
@@ -277,6 +304,9 @@ class base_fork_join(pipe):
             )
             close_queues(queues)
 
+            # let's not make zombie processes.
+            for proc in processes:
+                proc.join()
 
         if producer.raised_exception is not None:
             raise producer.raised_exception
@@ -294,26 +324,31 @@ class threaded(base_fork_join):
 
 
 class parallel(base_fork_join):
-    queue_class = ProcessingQueue
-    process_class = Process
+    def __init__(self, *args, **kwargs):
+        start_method = kwargs.pop('start_method', None) or 'spawn'
+        super().__init__(*args, **kwargs)
+
+        ctx = get_context(start_method)
+        self.queue_class = ctx.Queue
+        self.process_class = ctx.Process
 
     def get_worker_name(self, index: int):
         return "WorkerProcess[{}]".format(index)
 
 
 class on_bg_thread(threaded):
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
         kwargs['num_workers'] = 1
-        super().__init__(**kwargs)
+        super().__init__(*args, **kwargs)
 
     def get_worker_name(self, index: int):
         return "BackgroundWorkerThread"
 
 
 class on_bg_process(parallel):
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
         kwargs['num_workers'] = 1
-        super().__init__(**kwargs)
+        super().__init__(*args, **kwargs)
 
     def get_worker_name(self, index: int):
         return "BackgroundWorkerProcess"
