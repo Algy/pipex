@@ -15,7 +15,6 @@ from .pdatastructures import PAtom, PRecord
 from .pbase import Source, Sink
 
 class PStorage:
-    SAVE_MODES = ('incremental', 'always')
     def __init__(self, base_dir='.'):
         self.base_dir = base_dir
 
@@ -23,16 +22,23 @@ class PStorage:
                use_batch: bool = False,
                batch_size: Optional[int] = None,
                flush_interval: float = 1.0,
-               save_mode: str = 'incremental',
               ) -> "PBucket":
         return PBucket(
             storage=self,
-            scope=(name, ),
+            scope=tuple(name.lstrip("/").rstrip("/").split("/")),
             use_batch=use_batch,
             batch_size=batch_size,
             flush_interval=flush_interval,
-            save_mode=save_mode,
         )
+
+    def find(self, prefix):
+        prefix = prefix.lstrip("/").rstrip("/")
+        dir_name = join(self.base_dir, *prefix.split("/"))
+        return [
+            prefix + "/" + name
+            for name in os.listdir(dir_name)
+        ]
+
 
     def bucket_names(self):
         return [
@@ -69,8 +75,18 @@ class PBucketVersion:
     def parse(cls, ver: str):
         return cls(tuple(map(int, ver.split("."))))
 
+class StorageVersionInfo:
+    def get_source_chain_hash(self):
+        raise NotImplementedError
 
-class PBucketMetadata:
+    def get_source_version(self):
+        raise NotImplementedError
+
+    def get_latest_record_timestamp(self):
+        raise NotImplementedError
+
+
+class PBucketMetadata(StorageVersionInfo):
     def __init__(self, *,
                  meta_version: PBucketVersion,
                  source_chain_hash: Optional[str],
@@ -81,6 +97,14 @@ class PBucketMetadata:
         self.source_version = source_version
         self.latest_record_timestamp = latest_record_timestamp
 
+    def get_source_chain_hash(self):
+        return self.source_chain_hash
+
+    def get_source_version(self):
+        return self.source_version
+
+    def get_latest_record_timestamp(self):
+        return self.latest_record_timestamp
 
     def to_json(self):
         return {
@@ -119,14 +143,12 @@ class PBucket(Source, Sink):
                  scope: Tuple[str],
                  use_batch: bool,
                  batch_size: Optional[int],
-                 flush_interval: float,
-                 save_mode: str):
+                 flush_interval: float):
         self.storage = storage
         self.scope = scope
         self.use_batch = use_batch
         self.batch_size = batch_size
         self.flush_interval = flush_interval
-        self.save_mode = save_mode
 
         self.logger = logging.getLogger("PBucket({!r})".format(self.directory_name))
         self._last_flush_time = None
@@ -146,6 +168,9 @@ class PBucket(Source, Sink):
     @property
     def data_directory_name(self):
         return join(self.directory_name, "data")
+
+    def get_storage_version_info(self) -> StorageVersionInfo:
+        return self._load_metadata()
 
     # load
     def generate_precords(self, our) -> Iterator[PRecord]:
@@ -262,19 +287,33 @@ class PBucket(Source, Sink):
             self._flush_metadata(metadata)
             self._last_flush_time = now
 
+    def _save(self, tr_source):
+        if hasattr(tr_source.source, 'get_storage_version_info'):
+            source_version_info = tr_source.source.get_storage_version_info()
+            my_version_info = self.get_source_version_info()
+
+            if source_version_info.get_source_chain_hash() == tr_source.transformer.chain_hash():
+                # Transformer has changed
+                return 'all'
+            elif source_version_info.get_source_version() > my_version_info.get_source_version():
+                # Version of storage has increased
+                return 'all'
+            elif source_version_info.get_latest_record_timestamp() > my_version_info.get_latest_record_timestamp():
+                ...
+
+        else:
+            return 'all'
+
     def process(self, our, tr_source: "TransformedSource") -> Iterator[PRecord]:
         self._ensure_pbucket_dir()
         metadata = self._load_metadata()
 
         use_existing = False
-        timestamp
         if self.save_mode == 'incremental':
             source_chain_hash = tr_source.chain_hash()
             timestamp
             if source_chain_hash != metadata.source_chain_hash:
                 pass
-
-
 
 
         try:
