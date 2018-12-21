@@ -1,3 +1,5 @@
+import random
+
 from ..pdatastructures import PRecord
 from ..poperators import pipe, pipe_map, sink
 
@@ -8,6 +10,20 @@ from itertools import islice
 class done(sink):
     def save(self, value):
         pass
+
+EMPTY = object()
+class constant(pipe):
+    def __init__(self, value=EMPTY, **channel_values):
+        self.value = value
+        self.channel_values = channel_values
+
+    def transform(self, our, precords):
+        for precord in precords:
+            d = self.channel_values
+            if self.value is not EMPTY:
+                d = d.copy()
+                d[precord.active_channel] = self.value
+            yield precord.merge(**d)
 
 
 class channel(pipe):
@@ -134,7 +150,7 @@ class take(pipe):
         return islice(precords, self.n)
 
 
-class drop(pipe_map):
+class drop(pipe):
     def __init__(self, n):
         self.n = n
 
@@ -145,9 +161,27 @@ class drop(pipe_map):
                 continue
             yield precord
 
+class shuffle(pipe):
+    def __init__(self, window_size=None):
+        self.window_size = window_size
+
+    def transform(self, our, precords):
+        if self.window_size is None:
+            window = list(precords)
+            random.shuffle(window)
+            yield from window
+        else:
+            while True:
+                window = list(islice(precords, self.window_size))
+                if not window:
+                    break
+                random.shuffle(window)
+                yield from window
+
+
 __all__ = (
-    'done', 'tap', 'channel', 'dup', 'preload',
+    'done', 'constant', 'tap', 'channel', 'dup', 'preload',
     'batch', 'unbatch', 'base_curriable',
     'map', 'filter', 'slice', 'grep',
-    'take', 'drop',
+    'take', 'drop', 'shuffle',
 )

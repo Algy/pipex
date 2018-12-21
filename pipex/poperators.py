@@ -30,7 +30,6 @@ class BaseMeta(type):
             return getattr(cls(), name)
         return super().__getattribute__(name)
 
-
 class SourceMeta(BaseMeta, Source):
     def generate_precords(cls, our) -> Iterator[PRecord]:
         return cls().generate_precords(our)

@@ -60,7 +60,17 @@ class PRecord:
         return self.channel_atoms.keys()
 
     def get(self, name, default=None):
-        return self.channel_atoms.get(name, default)
+        atom = self.channel_atoms.get(name)
+        if atom is None:
+            return default
+        return atom.value
+
+    def get_atom(self, name):
+        return self.channel_atoms.get(name)
+
+    def __getitem__(self, name):
+        atom = self.channel_atoms[name]
+        return atom.value
 
     def with_channel(self, channel_name: str) -> "PRecord":
         return PRecord(
@@ -69,6 +79,18 @@ class PRecord:
             active_channel=channel_name,
             channel_atoms=self.channel_atoms,
         )
+
+    def with_channel_item(self, channel_name: str, value: Any) -> "PRecord":
+        channel_atoms = self.channel_atoms.copy()
+        channel_atoms[channel_name] = PAtom(value=value, format=_infer_format_from_type(channel_name, value))
+
+        return PRecord(
+            id=self.id,
+            timestamp=self.timestamp,
+            active_channel=channel_name,
+            channel_atoms=channel_atoms,
+        )
+
 
     def merge(self, **kwargs) -> "PRecord":
         channel_atoms = self.channel_atoms.copy()
@@ -79,6 +101,15 @@ class PRecord:
             timestamp=time.time(),
             active_channel=self.active_channel,
             channel_atoms=channel_atoms,
+        )
+
+
+    def with_id(self, id: str):
+        return PRecord(
+            id=id,
+            timestamp=self.timestamp,
+            active_channel=self.active_channel,
+            channel_atoms=self.channel_atoms,
         )
 
     def with_value(self, value: Any):
