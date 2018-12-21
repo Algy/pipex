@@ -15,6 +15,7 @@ mypy = "*"
 psutil = "*"
 pytest-profiling = "*"
 snakeviz = "*"
+tesserocr = "*"
 
 [requires]
 python_version = "3.6"
