@@ -51,12 +51,12 @@ def test_parallel_errornous_case():
 def test_md5():
     arr = [str(i) for i in range(10000)]
     results = []
-    pipe = arr >> parallel(map(lambda x: md5(x.encode()).hexdigest())) >> results
+    pipe = arr >> parallel(map(lambda x: md5(x.encode() * 10000).hexdigest())) >> results
     pipe.do()
 
 
 def p(x):
-    return md5(x.encode()).hexdigest()
+    return md5(x.encode() * 10000).hexdigest()
 
 def test_md5_pool():
     from multiprocessing import Pool

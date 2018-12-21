@@ -7,6 +7,7 @@ from threading import Thread
 from queue import Queue as ThreadingQueue, Full, Empty
 from multiprocessing import Process, cpu_count, Queue as ProcessingQueue
 from typing import Optional, Type
+from itertools import islice
 
 
 class WorkerQuit(BaseException):
@@ -24,11 +25,20 @@ def close_queues(queues):
     for q in queues:
         safe_call(q, 'oin_thread')
 
+def _slice_chunk(precords, chunk_size):
+    it = precords
+    while True:
+        chunk = list(islice(it, chunk_size))
+        if not chunk:
+            break
+        yield chunk
+
 
 
 class ProducerThread(Thread):
-    def __init__(self, poll_interval, in_q, precords, workers):
+    def __init__(self, chunk_size, poll_interval, in_q, precords, workers):
         super().__init__(daemon=True)
+        self.chunk_size = chunk_size
         self.poll_interval = poll_interval
         self.in_q = in_q
         self.precords = precords
@@ -39,12 +49,12 @@ class ProducerThread(Thread):
     def run(self):
         in_q, precords = self.in_q, self.precords
         try:
-            for precord in precords:
+            for precord_chunk in _slice_chunk(precords, self.chunk_size):
                 while True:
                     if self.asked_to_quit:
                         raise WorkerQuit
                     try:
-                        in_q.put(precord, timeout=self.poll_interval)
+                        in_q.put(precord_chunk, timeout=self.poll_interval)
                         break
                     except Full:
                         pass
@@ -77,20 +87,22 @@ class SourceFromProducerInWorker(Source):
         while True:
             self.owner._check_interrupt()
             try:
-                precord = in_q.get(timeout=poll_interval)
-                if precord is None: # met sentinel, which is the same as EOF. quit.
+                precord_chunk = in_q.get(timeout=poll_interval)
+                if precord_chunk is None: # met sentinel, which is the same as EOF. quit.
                     break
-                yield precord
+                yield from precord_chunk
             except Empty:
                 pass
 
 
 class Worker:
     def __init__(self, *,
+                 chunk_size,
                  poll_interval,
                  ignore_error, error_logger,
                  name, our, target_chain,
                  in_q, out_q, ctl_in_q, ctl_out_q):
+        self.chunk_size = chunk_size
         self.poll_interval = poll_interval
         self.ignore_error = ignore_error
         self.error_logger = error_logger
@@ -110,14 +122,12 @@ class Worker:
 
 
     def run(self):
-        target_chain = SourceFromProducerInWorker(self) >> self.target_chain
-
         try:
-            for precord in target_chain.execute(self.our):
+            for precord_chunk in _slice_chunk(self._generate(), self.chunk_size):
                 while True:
                     self._check_interrupt()
                     try:
-                        self.out_q.put(precord, timeout=self.poll_interval)
+                        self.out_q.put(precord_chunk, timeout=self.poll_interval)
                         break
                     except Full:
                         pass
@@ -129,6 +139,11 @@ class Worker:
             self._ask_parent_raise(exc)
         finally:
             self._notify_parent_done()
+
+    def _generate(self):
+        target_chain = SourceFromProducerInWorker(self) >> self.target_chain
+        for precord in target_chain.execute(self.our):
+            yield precord
 
     def _ask_parent_raise(self, exc):
         if not self.ignore_error:
@@ -170,7 +185,7 @@ class base_fork_join(pipe):
                  target_chain: PipeChain,
                  num_workers=None,
                  chunk_size=200,
-                 queue_size=1,
+                 queue_size=20,
                  ignore_error=False,
                  poll_interval=2.0,
                  error_logger=logging.error):
@@ -179,6 +194,7 @@ class base_fork_join(pipe):
         self.target_chain = target_chain
         self.num_workers = num_workers or cpu_count()
         self.chunk_size = chunk_size
+        self.queue_size = queue_size
         self.ignore_error = ignore_error
         self.poll_interval = poll_interval
         self.error_logger = error_logger
@@ -186,7 +202,7 @@ class base_fork_join(pipe):
     @property
     def _real_queue_size(self):
         # chunk_size + the number of sentinels
-        return 2 * self.num_workers + self.num_workers
+        return self.queue_size * self.num_workers + self.num_workers
 
     def _run_workers(self, our):
         in_q, out_q = self.queue_class(self._real_queue_size), self.queue_class(self._real_queue_size)
@@ -195,6 +211,7 @@ class base_fork_join(pipe):
             name = self.get_worker_name(index)
             workers.append(
                 Worker(
+                    chunk_size=self.chunk_size,
                     poll_interval=self.poll_interval,
                     ignore_error=self.ignore_error,
                     error_logger=self.error_logger,
@@ -216,16 +233,22 @@ class base_fork_join(pipe):
         return workers, processes, in_q, out_q
 
     def _run_producer(self, precords, workers, in_q):
-        producer = ProducerThread(self.poll_interval, in_q, precords, workers)
+        producer = ProducerThread(
+            self.chunk_size,
+            self.poll_interval,
+            in_q,
+            precords,
+            workers
+        )
         producer.start()
         return producer
 
     def _run_consumer(self, workers, out_q):
         workers_not_done = set(workers)
         while workers_not_done or not out_q.empty():
-            precord = out_q.get()
-            if precord is not None:
-                yield precord
+            precord_chunk = out_q.get()
+            if precord_chunk is not None:
+                yield from precord_chunk
             else:
                 done_workers = set()
                 for worker in workers_not_done:
