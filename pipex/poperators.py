@@ -1,3 +1,4 @@
+import inspect
 
 from .pdatastructures import PRecord
 from .pbase import Source, Transformer, Sink, pipex_hash
@@ -16,10 +17,19 @@ class AutoChainHashMixin:
             *[segment for pair in self.__dict__.items() for segment in pair]
         )
 
+SOURCE_MEMBERS = set(name for name, _ in inspect.getmembers(Source) if not name.startswith("_"))
+TRANSFORMER_MEMBERS = set(name for name, _ in inspect.getmembers(Transformer) if not name.startswith("_"))
+SINK_MEMBERS = set(name for name, _ in inspect.getmembers(Sink) if not name.startswith("_"))
 
 class BaseMeta(type):
-    def chain_hash(cls) -> str:
-        return cls().chain_hash()
+    def __getattribute__(cls, name):
+        if issubclass(cls, Source) and name in SOURCE_MEMBERS:
+            return getattr(cls(), name)
+        elif issubclass(cls, Transformer) and name in TRANSFORMER_MEMBERS:
+            return getattr(cls(), name)
+        elif issubclass(cls, Sink) and name in SINK_MEMBERS:
+            return getattr(cls(), name)
+        return super().__getattribute__(name)
 
 
 class SourceMeta(BaseMeta, Source):
@@ -28,7 +38,6 @@ class SourceMeta(BaseMeta, Source):
 
 
 class TransformerMeta(BaseMeta, Transformer):
-
     def transform(cls, our, precords: Iterator[PRecord]) -> Iterator[PRecord]:
         return cls().transform(our, precords)
 

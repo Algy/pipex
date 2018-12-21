@@ -15,20 +15,6 @@ def pipex_hash(type: str, *args: "PipeChain") -> str:
     return sha1(text.encode()).hexdigest()
 
 
-#
-# As rshift(>>) operator has  higher precedence over pipe operator(|),
-# Some hacks are employed.
-# Case 1. Source >> pipe1 | pipe2
-#   TransformedSource | pipe2
-#   => Source >> pipe1 | pipe2
-# Case 2. Source >> pipe1 | pipe2 >> Sink
-#   It is grouped as (Source >> pipe1) | (pipe2 >> Sink)
-#   TransformedSource | TransformedSink as sink
-#   => Source >> pipe1 | pipe2 >> Sink
-# Case 3. pipe1 | (pipe2 >> Sink)
-#   pipe | TransformedSink
-
-
 class We:
     @classmethod
     def default_value(cls) -> "We":
