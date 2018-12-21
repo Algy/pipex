@@ -137,7 +137,6 @@ class filter(base_curriable):
     def filter(self, value):
         return self._curried_fn(value)
 
-
 class slice(pipe):
     def __init__(self, *args):
         self.args = args
@@ -190,10 +189,19 @@ class shuffle(pipe):
                 random.shuffle(window)
                 yield from window
 
+class select_channels(pipe):
+    def __init__(self, *channels: str):
+        self.channels = channels
+        self._channel_set = set(channels)
+
+    def transform(self, our, precords):
+        channel_set = self._channel_set
+        for precord in precords:
+            yield precord.select_channels(_channel_set)
 
 __all__ = (
     'done', 'constant', 'tap', 'channel', 'dup', 'preload',
     'batch', 'unbatch', 'base_curriable',
     'map', 'channel_map', 'filter', 'slice', 'grep',
-    'take', 'drop', 'shuffle',
+    'take', 'drop', 'shuffle', 'select_channels',
 )

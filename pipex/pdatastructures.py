@@ -80,6 +80,18 @@ class PRecord:
             channel_atoms=self.channel_atoms,
         )
 
+    def select_channels(self, channels) -> "PRecord":
+        channel_atoms = {
+            k: v for k, v in self.channel_atoms.items()
+            if k in channels
+        }
+        return PRecord(
+            id=self.id,
+            timestamp=self.timestamp,
+            active_channel=self.active_channel,
+            channel_atoms=channel_atoms,
+        )
+
     def with_channel_item(self, channel_name: str, value: Any) -> "PRecord":
         channel_atoms = self.channel_atoms.copy()
         channel_atoms[channel_name] = PAtom(value=value, format=_infer_format_from_type(channel_name, value))
