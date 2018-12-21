@@ -53,3 +53,12 @@ def test_filter_simple():
 
 def test_filter_curry():
     assert list(([1,2,3] >> filter(lambda x, y: x % y == 0, 4, ...)).values()) == [1, 2]
+
+
+def test_batch():
+    batches = list(([1,2,3,4] >> batch(3)).values())
+    assert batches[0][0].value == 1
+    assert batches[0][1].value == 2
+    assert batches[0][2].value == 3
+    assert batches[1][0].value == 4
+

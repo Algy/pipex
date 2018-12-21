@@ -68,10 +68,8 @@ class batch(pipe):
         self.batch_size = batch_size
 
     def transform(self, our, precords):
-
-        it = iter(precords)
         while True:
-            mini_batch = islice(precords, self.batch_size)
+            mini_batch = list(islice(precords, self.batch_size))
             if not mini_batch: break
             yield PRecord.from_object(mini_batch, 'precord_batch')
 
