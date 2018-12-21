@@ -1,7 +1,6 @@
-import glob
-
+from glob import glob as glob_function
 from ..pdatastructures import PRecord
-from ..pbase import pipe_map, source
+from ..poperators import pipe_map, source
 
 
 class load_text(pipe_map):
@@ -11,7 +10,7 @@ class load_text(pipe_map):
 
             with open(file_name) as f:
                 text = f.read()
-            yield precord.with_channel("text").with_value(text)j
+            yield precord.with_channel("text").with_value(text)
 
 class load_binary(pipe_map):
     def transform(self, precords):
@@ -28,4 +27,9 @@ class glob(source):
         self.pattern = pattern
 
     def generate(self):
-        return glob.glob(self.pattern)
+        return glob_function(self.pattern)
+
+
+__all__ = (
+    'load_text', 'load_binary', 'glob',
+)

@@ -1,6 +1,8 @@
 from .pdatastructures import PRecord
 from functools import reduce
-from typing import List, Iterator, Any
+from typing import List, Iterator, Any, cast
+
+from hashlib import sha1
 
 def _ensure_hash(obj: Any):
     if hasattr(obj, "chain_hash"):
@@ -9,8 +11,8 @@ def _ensure_hash(obj: Any):
         return str(obj)
 
 def pipex_hash(type: str, *args: "PipeChain") -> str:
-    text = ":".join(type, *[_ensure_hash(arg) for arg in args])
-    return sha1(text.encode()).hexdigest().decode()
+    text = "".join([type, *[_ensure_hash(arg) for arg in args]])
+    return sha1(text.encode()).hexdigest()
 
 
 #
@@ -37,7 +39,7 @@ class We:
 class PipeChain:
     def __lrshift__(self, lhs):
         # lhs(object that can be coerced to a Source) >> self
-        return Source.coerce(lhs) >> self
+        return Source.coerce_source(lhs) >> self
 
     def chain_hash(self) -> str:
         raise NotImplementedError
@@ -45,7 +47,7 @@ class PipeChain:
     def __bool__(self):
         return True
 
-    def execute(self, our) -> Iterator[PRecord]:
+    def execute(self, our: We) -> Iterator[PRecord]:
         raise NotImplementedError
 
     def do(self):
@@ -54,7 +56,7 @@ class PipeChain:
 
 class Source(PipeChain):
     @classmethod
-    def coerce(cls, obj):
+    def coerce_source(cls, obj) -> "Source":
         if isinstance(obj, Source):
             return obj
         elif isinstance(obj, list):
@@ -72,9 +74,11 @@ class Source(PipeChain):
         elif isinstance(other, Transformer):
             # self >> (pipe1 | pipe2)
             return TransformedSource(self, other)
+        elif isinstance(other, TransformedSink):
+            return other.with_source(self)
         else:
-            other_as_sink = Sink.coerce(other)
-            return Pipeline.direct_pipeline(self, other)
+            return NotImplemented
+
 
     def __iter__(self) -> Iterator[PRecord]:
         return self.generate_precords(We.default_value())
@@ -83,44 +87,50 @@ class Source(PipeChain):
         for precord in self.generate_precords(we or We.default_value()):
             yield precord.value
 
-    def execute(self, our) -> Iterator[PRecord]:
+    def execute(self, our: We) -> Iterator[PRecord]:
         return self.generate_precords(our)
 
-    def generate_precords(self, our) -> Iterator[PRecord]:
+    def generate_precords(self, our: We) -> Iterator[PRecord]:
         raise NotImplementedError
 
 
 class Transformer(PipeChain):
     def __rshift__(self, other):
         # transformer >> sink
-        return TransformedSink(Sink.coerce(other))
+        return TransformedSink(self, Sink.coerce_sink(other))
 
     def __or__(self, other):
         # Transformer | Transformer (pipe operator)
         if isinstance(other, Transformer):
             return self.wrap_transformer(other)
+        elif isinstance(other, TransformedSink):
+            return TransformedSink(self.wrap_transformer(other.transformer), other.sink)
         else:
-            raise TypeError(
-                "Transformer cannot pipe to {!r}. Did you forget to put parantheses around operators?".format(other)
-            )
+            return NotImplemented
 
-    def __ror__(self, lhs):
-        raise TypeError("Transformer cannot be piped from {!r}, Did you forget to put parantheses around operators?.".format(lhs))
-
-    def transform(self, our, precords: Iterator[PRecord]) -> Iterator[PRecord]:
+    def transform(self, our: We, precords: Iterator[PRecord]) -> Iterator[PRecord]:
         raise NotImplementedError
 
-    def execute(self, our) -> Iterator[PRecord]:
+    def execute(self, our: We) -> Iterator[PRecord]:
         return iter(())
 
-    def wrap_transformer(self, other: Transformer) -> Transformer:
+    def wrap_transformer(self, other: "Transformer") -> "Transformer":
         self_is_seq, other_is_seq = isinstance(self, TransformerSequence), isinstance(other, TransformerSequence)
-        if self_is_seq and other_is_seq:
-            return TransformerSequence(self.transformers + other.transformers)
+        if isinstance(other, BufferedTransformer):
+            return BufferedTransformer(
+                self.wrap_transformer(other.lhs_tr),
+                other.sink,
+                other.rhs_tr,
+            )
+        elif self_is_seq and other_is_seq:
+            return TransformerSequence(
+                cast(TransformerSequence, self).transformers +
+                cast(TransformerSequence, other).transformers
+            )
         elif self_is_seq and not other_is_seq:
-            return TransformerSequence(self.transformers + [other])
+            return TransformerSequence(cast(TransformerSequence, self).transformers + [other])
         elif not self_is_seq and other_is_seq:
-            return TransformerSequence([self] + other.transformers)
+            return TransformerSequence([self] + cast(TransformerSequence, other).transformers)
         else:
             return TransformerSequence([self, other])
 
@@ -128,15 +138,12 @@ class TransformerSequence(Transformer):
     def __init__(self, transformers: List[Transformer] = None):
         self.transformers = transformers or []
 
-    def transform(self, our, precords: Iterator[PRecord]) -> Iterator[PRecord]:
+    def transform(self, our: We, precords: Iterator[PRecord]) -> Iterator[PRecord]:
         return reduce(
             lambda prs, transformer: transformer.transform(our, prs),
             self.transformers,
             precords
         )
-
-    def wrap_transformer(self, other: Transformer) -> Transformer:
-        return TransformerSequence(self.transformers + [other])
 
     def __repr__(self):
         return " | ".join(repr(transformer) for transformer in self.transformers)
@@ -145,7 +152,7 @@ class TransformerSequence(Transformer):
 
 class Sink(PipeChain):
     @classmethod
-    def coerce(cls, obj):
+    def coerce_sink(cls, obj) -> "Sink":
         if isinstance(obj, Sink):
             return obj
         elif isinstance(obj, list):
@@ -153,12 +160,12 @@ class Sink(PipeChain):
         elif obj is print:
             return PrintSink()
         else:
-            raise TypeError("Not a sink {!r}".format(obj))
+            return NotImplemented
 
-    def execute(self, our):
+    def execute(self, our: We):
         return iter(())
 
-    def process(self, our, tr_source: "TransformedSource") -> Iterator[PRecord]:
+    def process(self, our: We, tr_source: "TransformedSource") -> Iterator[PRecord]:
         raise NotImplementedError
 
 
@@ -170,11 +177,11 @@ class ListSourceSink(Source, Sink):
     def get_hash(self) -> str:
         return str(id(self.dest_list))
 
-    def generate_precords(self, our) -> Iterator[PRecord]:
+    def generate_precords(self, our: We) -> Iterator[PRecord]:
         for item in self.dest_list:
             yield PRecord.from_object(item)
 
-    def process(self, our, tr_source: "TransformedSource") -> Iterator[PRecord]:
+    def process(self, our: We, tr_source: "TransformedSource") -> Iterator[PRecord]:
         dest_list = self.dest_list
         for precord in tr_source.generate_precords(our):
             dest_list.append(precord)
@@ -185,7 +192,7 @@ class IterSource(Source):
     def __init__(self, it):
         self.it = it
 
-    def generate_precords(self, our):
+    def generate_precords(self, our: We):
         for item in self.it:
             yield PRecord.from_object(item)
 
@@ -194,7 +201,7 @@ class IterSource(Source):
 
 
 class PrintSink(Sink):
-    def process(self, our, tr_source: "TransformedSource") -> Iterator[PRecord]:
+    def process(self, our: We, tr_source: "TransformedSource") -> Iterator[PRecord]:
         from pprint import pprint
         for precord in tr_source.generate_precords(our):
             pprint(precord.value)
@@ -207,7 +214,7 @@ class PrintSink(Sink):
 class IdentityTransformer(Transformer):
     _chain_hash = pipex_hash("IdentityTransformer")
 
-    def transform(self, our, precords: Iterator[PRecord]) -> Iterator[PRecord]:
+    def transform(self, our: We, precords: Iterator[PRecord]) -> Iterator[PRecord]:
         return precords
 
     def chain_hash(self) -> str:
@@ -220,12 +227,53 @@ class TransformedSource(Source):
         self.transformer = transformer
 
     def __rshift__(self, other):
-        if isinstance(other, Transformer):
+        if isinstance(other, BufferedTransformer):
+            return NotImplemented
+        elif isinstance(other, Transformer):
             # (Source >> pipe) | other_pipe
             return TransformedSource(self.source, self.transformer.wrap_transformer(other))
         elif isinstance(other, TransformedSink):
             new_tr_source = TransformedSource(self.source, self.transformer.wrap_transformer(other.transformer))
             return Pipeline(new_tr_source, other.sink)
+        elif isinstance(other, BufferedTransformer):
+            # source >> (pipe >> sink >> pipe)
+            # (source >> pipe >> sink) >> pipe
+            return TransformedSource(
+                Pipeline(
+                    TransformedSource(self.source, self.transformer.wrap_transformer(other.lhs_tr)),
+                    other.sink,
+                ),
+                other.rhs_tr
+            )
+        elif isinstance(other, Sink):
+            return self.with_sink(other)
+        else:
+            return NotImplemented
+
+    def __or__(self, other):
+        if isinstance(other, BufferedTransformer):
+            # (source >> pipe) | (pipe >> sink >> pipe)
+            # (source >> pipe | pipe >> sink) >> pipe
+            return TransformedSource(
+                Pipeline(
+                    TransformedSource(
+                        self.source,
+                        self.transformer.wrap_transformer(other.lhs_tr),
+                    ),
+                    other.sink,
+                ),
+                other.rhs_tr
+            )
+        elif isinstance(other, Transformer):
+            return TransformedSource(self.source, self.transformer.wrap_transformer(other))
+        elif isinstance(other, TransformedSink):
+            return Pipeline(
+                TransformedSource(
+                    self.source,
+                    self.transformer.wrap_transformer(other.transformer),
+                ),
+                other.sink,
+            )
         else:
             return NotImplemented
 
@@ -234,23 +282,40 @@ class TransformedSource(Source):
         return pipex_hash("TransformedSource", self.source, self.transformer)
 
     def with_sink(self, sink: Sink) -> "Pipeline":
-        return Pipeline(self.source, self.transformer, sink)
+        return Pipeline(self, sink)
 
-    def generate_precords(self, our) -> Iterator[PRecord]:
+    def generate_precords(self, our: We) -> Iterator[PRecord]:
         return self.transformer.transform(our, self.source.generate_precords(our))
 
     def __repr__(self):
         return "{!r} >> ({!r})".format(self.source, self.transformer)
 
+class BufferedTransformer(Transformer):
+    def __init__(self, lhs_tr, sink, rhs_tr):
+        self.lhs_tr = lhs_tr
+        self.sink = sink
+        self.rhs_tr = rhs_tr
+
+    def chain_hash(self):
+        return pipex_hash("BufferedTransformer", self.lhs_tr, self.sink, self.rhs_tr)
+
+    def transform(self, our: We, precords: Iterator[PRecord]) -> Iterator[PRecord]:
+        tr_source = TransformedSource(IterSource(precords), self.lhs_tr)
+        return self.transform(our, self.sink.process(our, tr_source))
+
+    def __repr__(self):
+        return "({!r} >> {!r} >> {!r})".format(self.lhs_tr, self.sink, self.rhs_tr)
 
 class TransformedSink(Sink):
     def __init__(self, transformer: Transformer, sink: Sink):
         self.transformer = transformer
         self.sink = sink
 
-    def __rrshift__(self, lhs):
-        if isinstance(lhs, Transformer):
-            return TransformedSink(lhs.wrap_transformer(self.transformer), self.sink)
+    def __rshift__(self, other):
+        if isinstance(other, Transformer):
+            if not isinstance(self.sink, Source):
+                raise TypeError("Sink {!r} should be both source and sink".format(self.sink))
+            return BufferedTransformer(self.transformer, self.sink, other)
         else:
             return NotImplemented
 
@@ -260,14 +325,11 @@ class TransformedSink(Sink):
     def with_source(self, source: Source) -> "Pipeline":
         return Pipeline(TransformedSource(source, self.transformer), self.sink)
 
-    def generate_precords(self, our) -> Iterator[PRecord]:
-        return self.transformer.transform(our, self.source.generate_precords(our))
-
     def __repr__(self):
         return "({!r}) >> {!r}".format(self.transformer, self.sink)
 
-    def execute(self, our):
-        return it(())
+    def execute(self, our: We):
+        return iter(())
 
 
 class Pipeline(Source):
@@ -280,16 +342,16 @@ class Pipeline(Source):
         return self.transformed_source.source
 
     @property
-    def tranformer(self):
+    def transformer(self):
         return self.transformed_source.transformer
 
     def chain_hash(self) -> str:
         return pipex_hash("Pipeline", self.transformed_source, self.sink)
 
-    def generate_precords(self, our) -> Iterator[PRecord]:
+    def generate_precords(self, our: We) -> Iterator[PRecord]:
         return self.transformed_source.generate_precords(our)
 
-    def execute(self, our):
+    def execute(self, our: We):
         return self.sink.process(our, self.transformed_source)
 
     @classmethod

@@ -1,6 +1,8 @@
 from ..pdatastructures import PRecord
 from ..poperators import pipe, pipe_map, sink
 
+from typing import Iterator
+
 from itertools import islice
 
 class done(sink):
@@ -27,6 +29,21 @@ class channel(pipe):
             yield precord.with_channel(channel_name)
 
 
+class preload(pipe):
+    def __init__(self, size=None):
+        self.size = size
+
+    def transform(self, our, precords):
+        if self.size is None:
+            yield from list(precords)
+        else:
+            while True:
+                chunk = list(islice(precords, self.size))
+                if not chunk:
+                    break
+                yield from chunk
+
+
 class dup(pipe):
     def __init__(self, *names: str):
         self.names = names
@@ -35,7 +52,7 @@ class dup(pipe):
         for precord in precords:
             value = precord.value
             yield precord.merge(*{
-                name: value,
+                name: value
                 for name in self.names
             })
 
@@ -69,7 +86,6 @@ class base_curriable(pipe_map):
            self.arg_position = list(args).index(...)
         except ValueError:
             self.arg_position = 0
-
         self._curried_fn = self._curried()
 
 
@@ -77,9 +93,11 @@ class map(base_curriable):
     def map(self, value):
         return self._curried_fn(value)
 
+
 class filter(pipe_map):
     def filter(self, value):
         return self._curried_fn(value)
+
 
 class slice(pipe):
     def __init__(self, *args):
@@ -87,6 +105,7 @@ class slice(pipe):
 
     def transform(self, our, precords):
         return islice(precords, *args)
+
 
 class grep(pipe_map):
     def __init__(self, pattern=''):
@@ -96,14 +115,15 @@ class grep(pipe_map):
         return self.pattern in str(value)
 
 
-def take(pipe):
+class take(pipe):
     def __init__(self, n):
         self.n = n
 
     def transform(self, our, precords):
         return islice(precords, self.n)
 
-def drop(pipe_map):
+
+class drop(pipe_map):
     def __init__(self, n):
         self.n = n
 
@@ -113,3 +133,10 @@ def drop(pipe_map):
             if i < n:
                 continue
             yield precord
+
+__all__ = (
+    'done', 'tap', 'channel', 'dup',
+    'batch', 'unbatch', 'base_curriable',
+    'map', 'filter', 'slice', 'grep',
+    'take', 'drop',
+)

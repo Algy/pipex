@@ -1,12 +1,13 @@
 import logging
 
-from ..poperators import transformer
-from ..pbase import PipeChain, Sink, Transformer
+from ..poperators import pipe
+from ..pbase import PipeChain, Source, Sink, Transformer
 
 from threading import Thread
-from queue import Queue as ThreadingQueue, Full as ThreadingQueueFull, Empty as ThreadingQueueEmpty
+from queue import Queue as ThreadingQueue, Full, Empty
 from multiprocessing import Process, cpu_count
-from multiprocessing.queues import Queue as ProcessingQueue, Full as ProcessingQueueFull, Empty as ProcessingQueueEmpty
+from multiprocessing.queues import Queue as ProcessingQueue
+from typing import Optional, Type
 
 
 class WorkerQuit(BaseException):
@@ -33,7 +34,7 @@ class ProducerThread(Thread):
                     try:
                         in_q.put(precord, timeout=self.poll_interval)
                         break
-                    except (ThreadingQueueFull, ProcessingQueueFull):
+                    except Full:
                         pass
         except WorkerQuit:
             pass
@@ -65,7 +66,7 @@ class SourceFromProducerInWorker(Source):
                 obj = in_q.get(timeout=poll_interval)
                 if obj is not None:
                     yield obj
-            except (ThreadingQueueEmpty, ProcessingQueueEmpty):
+            except Empty:
                 pass
 
 
@@ -103,7 +104,7 @@ class Worker:
                     try:
                         self.out_q.put(precord, timeout=self.poll_interval)
                         break
-                    except (ThreadingQueueFull, ProcessingQueueFull):
+                    except Full:
                         pass
         except WorkerQuit:
             self._notify_parent_done()
@@ -126,7 +127,7 @@ class Worker:
         try:
             self.ctl_in_q.get_nowait()
             raise WorkerQuit
-        except (ThreadingQueueEmpty, ProcessingQueueEmpty):
+        except Empty:
             pass
 
     # should be called by producer or main thread
@@ -146,8 +147,8 @@ class Worker:
 
 # Fork-Join Model
 class base_fork_join(pipe):
-    queue_class = None
-    process_class = None
+    queue_class = None # type: Optional[Type]
+    process_class = None # type: Optional[Type]
 
     def __init__(self,
                  target_chain: PipeChain,
@@ -156,8 +157,8 @@ class base_fork_join(pipe):
                  ignore_error=False,
                  poll_interval=2.0,
                  error_logger=logging.error):
-        if not isinstance(target, (Sink, Transformer)):
-            raise TypeError("{!r} not sink or transformer".format(target))
+        if not isinstance(target_chain, (Sink, Transformer)):
+            raise TypeError("{!r} not sink or transformer".format(target_chain))
         self.target_chain = target_chain
         self.num_workers = num_workers or cpu_count()
         self.chunk_size = chunk_size
@@ -260,3 +261,8 @@ class on_bg_process(parallel):
 
     def get_worker_name(self, index: int):
         return "BackgroundWorkerProcess"
+
+__all__ = (
+    'threaded', 'parallel',
+    'on_bg_thread', 'on_bg_process',
+)

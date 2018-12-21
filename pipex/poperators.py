@@ -6,7 +6,10 @@ from typing import Iterator, Any
 
 
 class AutoChainHashMixin:
+    pass_through = False
     def chain_hash(self):
+        if self.pass_through:
+            return ''
         cls = self.__class__
         return pipex_hash(
             cls.__module__ + "." + cls.__name__,
@@ -47,9 +50,7 @@ class source(Source, AutoChainHashMixin, metaclass=SourceMeta):
 
 class pipe(Transformer, AutoChainHashMixin, metaclass=TransformerMeta):
     def transform(self, our, precords: Iterator[PRecord]) -> Iterator[PRecord]:
-        fn = self.map
-        for precord in precords:
-            new_value = fn(precord.value)
+        raise NotImplementedError
 
 class pipe_map(pipe):
     def filter(self, value: Any) -> bool:
@@ -71,11 +72,7 @@ class sink(Sink, AutoChainHashMixin, metaclass=SinkMeta):
     def save(self, obj: Any):
         raise NotImplementedError
 
-    def process(self, our, precords: Iterator[PRecord]) -> Iterator[PRecord]:
-        for precord in precords:
+    def process(self, our, tr_source) -> Iterator[PRecord]:
+        for precord in tr_source.genenrate_precords(our):
             self.save(precord.value)
             yield precord
-
-    def bound(self, other):
-        self.process(other)
-        return self

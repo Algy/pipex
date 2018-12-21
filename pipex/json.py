@@ -1,12 +1,12 @@
 import json
 
-from ..poperators import pipe, pipe_map, sink
+from .poperators import pipe, pipe_map, sink
 
 
-class load_json(pipe):
+class loads(pipe):
     def map(self, value):
         return json.loads(value)
 
-class dump_json(pipe):
+class dumps(pipe):
     def map(self, value):
         return json.dumps(value)

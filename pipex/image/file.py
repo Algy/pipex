@@ -17,4 +17,4 @@ class load_image(pipe):
                 img = Image.open(file_name)
                 img.load()
                 value = img
-            yield precord.merge(file_anme= )with_channel("image").with_value(np.array(img))
+            yield precord.merge(file_name=file_name).with_channel("image").with_value(value)
