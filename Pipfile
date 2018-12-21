@@ -5,7 +5,8 @@ name = "pypi"
 
 [packages]
 pillow = "*"
-numpy = "==1.15.4"
+numpy = "*"
+python-dateutil = "*"
 
 [dev-packages]
 pytest = "*"

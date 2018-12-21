@@ -10,6 +10,7 @@ from datetime import datetime
 from os.path import isfile, isdir, join
 from typing import Tuple, Iterator, Optional, Any, Dict, List
 from hashlib import sha1
+from PIL import Image
 
 from .pdatastructures import PAtom, PRecord
 from .pbase import Source, Sink
@@ -108,7 +109,6 @@ class PBucketMetadata(StorageVersionInfo):
 
     def to_json(self):
         return {
-            'version': self.version,
             'meta_version': str(self.meta_version),
             'source_chain_hash': self.source_chain_hash,
             'source_version': self.source_version,
@@ -153,6 +153,8 @@ class PBucket(Source, Sink):
         self.logger = logging.getLogger("PBucket({!r})".format(self.directory_name))
         self._last_flush_time = None
 
+        self._dir_check_cache = {}
+
     @property
     def directory_name(self):
         return join(self.storage.base_dir, *self.scope)
@@ -165,18 +167,31 @@ class PBucket(Source, Sink):
     def meta_tmp_name(self):
         return join(self.directory_name, "pbucket.json.tmp")
 
+    def get_sub_dir(self, name):
+        return join(self.directory_name, 'pbkt_' + name)
+
+    def ensure_sub_dir(self, name):
+        try:
+            return self._dir_check_cache[name]
+        except KeyError:
+            dir_name = self.get_sub_dir(name)
+            os.makedirs(dir_name, exist_ok=True)
+            self._dir_check_cache[name] = dir_name
+            return dir_name
+
     @property
     def data_directory_name(self):
-        return join(self.directory_name, "data")
+        return self.get_sub_dir('data')
 
     def get_storage_version_info(self) -> StorageVersionInfo:
         return self._load_metadata()
 
     # load
     def generate_precords(self, our) -> Iterator[PRecord]:
+        self._dir_check_cache = {}
         self._ensure_pbucket_dir()
-        directory_name = self.directory_name
-        data_directory_name = self.data_directory_name
+        directory_name, data_directory_name = self.directory_name, self.data_directory_name
+
 
         for file_name in os.listdir(data_directory_name):
             id_str, file_ext = splitext(file_name)
@@ -187,22 +202,22 @@ class PBucket(Source, Sink):
 
     def _load_precord(self, id: str):
         data_directory_name = self.data_directory_name
-        file_name = join(self.data_directory_name, id + ".json")
+        file_name = join(data_directory_name, id + ".json")
         with open(file_name) as f:
             d = json.load(f)
         id = d['id']
-        default_channel = d['default_channel']
+        active_channel = d['active_channel']
         channel_names = d['channel_names']
         channel_formats = d['channel_formats']
         timestamp = d['timestamp']
         data = d['data']
-        channels = {}
+        channel_atoms = {}
         for channel_name, format in zip(channel_names, channel_formats):
             value = None
             if format == 'data':
                 value = data.get(channel_name)
             else:
-                channel_dir_name = open(join(directory_name, channel_name))
+                channel_dir_name = self.ensure_sub_dir(channel_name)
                 if format == 'image':
                     ext = '.png'
                 elif format == 'numpy.ndarray':
@@ -224,31 +239,31 @@ class PBucket(Source, Sink):
                 else:
                     with open(value_file_name, "rb") as f:
                         value = f.read()
-            channels[name] = PAtom(value, format)
+            channel_atoms[channel_name] = PAtom(value=value, format=format)
         return PRecord(
             id=id,
-            channels=channels,
+            channel_atoms=channel_atoms,
             timestamp=timestamp,
-            default_channel=default_channel
+            active_channel=active_channel,
         )
 
     def _save_precord(self, precord: PRecord):
-        directory_name = self.directory_name
-        data_directory_name = self.data_directory_name
+        directory_name, data_directory_name = self.directory_name, self.data_directory_name
         data_file_name = join(data_directory_name, precord.id + ".json")
-        channel_names = list(precord.channels.keys())
+        channel_names = list(precord.channels)
         data = {}
         d = {
             "id": precord.id,
-            "default_channel": precord.default_channel,
+            "active_channel": precord.active_channel,
             "channel_names": channel_names,
-            "channel_formats": [precord.channels[name].format for name in channel_names],
+            "channel_formats": [precord.get_atom(name).format for name in channel_names],
             "timestamp": precord.timestamp,
             "data": data,
         }
 
         id = precord.id
-        for channel_name, patom in precord.channels.items():
+        for channel_name in precord.channels:
+            patom = precord.get_atom(channel_name)
             value, format = patom.value, patom.format
             if format == 'data':
                 data[channel_name] = value
@@ -262,7 +277,7 @@ class PBucket(Source, Sink):
             else:
                 ext = '.dat'
 
-            channel_dir_name = open(join(directory_name, channel_name))
+            channel_dir_name = self.ensure_sub_dir(channel_name)
             value_file_name = join(channel_dir_name, id + ext)
 
             if format == 'image':
@@ -275,6 +290,10 @@ class PBucket(Source, Sink):
             else:
                 with open(value_file_name, "wb") as f:
                     f.write(value)
+
+        file_name = join(self.data_directory_name, id + ".json")
+        with open(file_name, "w") as f:
+            json.dump(d, f)
 
     def _save_precord_with_flush(self, precord: PRecord, metadata: PBucketMetadata):
         self._save_precord(precord)
@@ -305,28 +324,21 @@ class PBucket(Source, Sink):
             return 'all'
 
     def process(self, our, tr_source: "TransformedSource") -> Iterator[PRecord]:
+        self._dir_check_cache = {}
         self._ensure_pbucket_dir()
         metadata = self._load_metadata()
-
-        use_existing = False
-        if self.save_mode == 'incremental':
-            source_chain_hash = tr_source.chain_hash()
-            timestamp
-            if source_chain_hash != metadata.source_chain_hash:
-                pass
-
 
         try:
             if self.use_batch:
                 if self.batch_size is None:
                     # full batch
-                    for precord in tr_source.genenrate_precords():
+                    for precord in tr_source.generate_precords(our):
                         self._save_precord_with_flush(precord, metadata)
-                    yield from self.genenrate_precords()
+                    yield from self.generate_precords(our)
                 else:
                     # mini batch
                     mini_batch = []
-                    for index, precord in enumerate(tr_source.genenrate_precords()):
+                    for index, precord in enumerate(tr_source.generate_precords(our)):
                         self._save_precord_with_flush(precord, metadata)
                         mini_batch.append(precord)
                         if (index + 1) % self.batch_size:
@@ -337,7 +349,7 @@ class PBucket(Source, Sink):
                         mini_batch.clear()
             else:
                 # stream
-                for precord in tr_source.genenrate_precords():
+                for precord in tr_source.generate_precords(our):
                     self._save_precord_with_flush(precord, metadata)
                     yield precord
         finally:
@@ -351,11 +363,15 @@ class PBucket(Source, Sink):
             return PBucketMetadata.from_json(data)
 
     def _flush_metadata(self, metadata: PBucketMetadata):
-        meta_name = self.meta_data
+        meta_name = self.meta_name
         meta_tmp_name = self.meta_tmp_name
 
         if isfile(meta_tmp_name):
-            raise RuntimeError("{} exists! Some other process might be modifying this bucket.".format(meta_tmp_name))
+            raise RuntimeError(
+                "{} exists!".format(meta_tmp_name) +
+                "Some other process might be modifying this bucket. " +
+                "If you are sure it is not, remove the file and try again."
+            )
 
         with open(meta_tmp_name, "w") as f:
             f.write(json.dumps(metadata.to_json()))
@@ -374,4 +390,4 @@ class PBucket(Source, Sink):
 
     def _ensure_dir(self, name):
         if not isdir(name):
-            os.makedirs(name)
+            os.makedirs(name, exist_ok=True)
