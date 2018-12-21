@@ -82,6 +82,6 @@ class sink(Sink, AutoChainHashMixin, metaclass=SinkMeta):
         raise NotImplementedError
 
     def process(self, our, tr_source) -> Iterator[PRecord]:
-        for precord in tr_source.genenrate_precords(our):
+        for precord in tr_source.generate_precords(our):
             self.save(precord.value)
             yield precord
