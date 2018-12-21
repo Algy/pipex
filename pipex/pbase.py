@@ -68,7 +68,16 @@ class Source(PipeChain):
                 raise TypeError("Not a sink {!r}".format(obj))
 
     def __rshift__(self, other) -> PipeChain:
-        if isinstance(other, Pipeline):
+        if isinstance(other, BufferedTransformer):
+            # source >> (pipe >> sink >> pipe)
+            return TransformedSource(
+                Pipeline(
+                    TransformedSource(self, other.lhs_tr),
+                    other.sink,
+                ),
+                other.rhs_tr
+            )
+        elif isinstance(other, Pipeline):
             # self >> (source >> (pipe1 | pipe2) >> sink)
             raise TypeError("Source cannot be attached to pipeline where source is already attached")
         elif isinstance(other, Transformer):
@@ -289,6 +298,7 @@ class TransformedSource(Source):
 
     def __repr__(self):
         return "{!r} >> ({!r})".format(self.source, self.transformer)
+
 
 class BufferedTransformer(Transformer):
     def __init__(self, lhs_tr, sink, rhs_tr):

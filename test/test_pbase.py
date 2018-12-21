@@ -140,6 +140,14 @@ def test_nested_pipeline():
     assert p2.lhs_tr.transformers == [tr1, tr2]
     assert p2.rhs_tr == tr3
 
+    p3 = source >> (tr1 | tr2 >> sink >> tr3)
+
+    assert isinstance(p3, TransformedSource)
+    assert isinstance(p3.source, Pipeline)
+    assert p3.source.source == source
+    assert p3.source.transformer.transformers == [tr1, tr2]
+    assert p3.source.sink == sink
+
     pipelines = [
         source >> tr1 | tr2 >> sink >> tr3 | tr4 >> sink_2,
         (source >> tr1 | tr2 >> sink) >> tr3 | tr4 >> sink_2,
@@ -157,5 +165,3 @@ def test_nested_pipeline():
         assert pipeline.source.transformer.transformers == [tr1, tr2]
         assert pipeline.source.sink == sink
         assert pipeline.source.source == source
-
-        
