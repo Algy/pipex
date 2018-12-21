@@ -53,5 +53,3 @@ def test_filter_simple():
 
 def test_filter_curry():
     assert list(([1,2,3] >> filter(lambda x, y: x % y == 0, 4, ...)).values()) == [1, 2]
-
-    

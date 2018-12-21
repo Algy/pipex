@@ -2,7 +2,6 @@ import inspect
 
 from .pdatastructures import PRecord
 from .pbase import Source, Transformer, Sink, pipex_hash
-
 from typing import Iterator, Any
 
 
@@ -60,6 +59,14 @@ class source(Source, AutoChainHashMixin, metaclass=SourceMeta):
 class pipe(Transformer, AutoChainHashMixin, metaclass=TransformerMeta):
     def transform(self, our, precords: Iterator[PRecord]) -> Iterator[PRecord]:
         raise NotImplementedError
+
+    def __repr__(self):
+        cls = self.__class__
+        if cls.__module__.startswith("pipex."):
+            return cls.__module__.replace(".operators.funcs", "") + "." + cls.__name__
+        else:
+            return cls.__module__ + "." + cls.__name__
+
 
 class pipe_map(pipe):
     def filter(self, value: Any) -> bool:
