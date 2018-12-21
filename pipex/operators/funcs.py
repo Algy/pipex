@@ -10,15 +10,6 @@ class done(sink):
         pass
 
 
-class tap(pipe_map):
-    def __init__(self, fn):
-        self.fn = fn
-
-    def map(self, value):
-        self.fn(value)
-        return value
-
-
 class channel(pipe):
     def __init__(self, channel_name):
         self.channel_name = channel_name
@@ -61,6 +52,7 @@ class batch(pipe):
         self.batch_size = batch_size
 
     def transform(self, our, precords):
+
         it = iter(precords)
         while True:
             mini_batch = islice(precords, self.batch_size)
@@ -84,17 +76,42 @@ class base_curriable(pipe_map):
 
         try:
            self.arg_position = list(args).index(...)
+           self.args = tuple([x for x in args if x != ...])
         except ValueError:
             self.arg_position = 0
         self._curried_fn = self._curried()
 
+    def _curried(self):
+        args = self.args
+        kwargs = self.kwargs
+        fn = self.fn
+        arg_position = self.arg_position
+
+        def simple_curry(x):
+            return fn(x, *args, **kwargs)
+
+        def insertion_curry(x):
+            my_args = list(args)
+            my_args.insert(arg_position, x)
+            return fn(*my_args, **kwargs)
+
+        if self.arg_position == 0:
+            return simple_curry
+        else:
+            return insertion_curry
+
+
+class tap(base_curriable):
+    def map(self, value):
+        self._curried_fn(value)
+        return value
 
 class map(base_curriable):
     def map(self, value):
         return self._curried_fn(value)
 
 
-class filter(pipe_map):
+class filter(base_curriable):
     def filter(self, value):
         return self._curried_fn(value)
 
@@ -135,7 +152,7 @@ class drop(pipe_map):
             yield precord
 
 __all__ = (
-    'done', 'tap', 'channel', 'dup',
+    'done', 'tap', 'channel', 'dup', 'preload',
     'batch', 'unbatch', 'base_curriable',
     'map', 'filter', 'slice', 'grep',
     'take', 'drop',
