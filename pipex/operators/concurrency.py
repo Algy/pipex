@@ -5,13 +5,25 @@ from ..pbase import PipeChain, Source, Sink, Transformer
 
 from threading import Thread
 from queue import Queue as ThreadingQueue, Full, Empty
-from multiprocessing import Process, cpu_count
-from multiprocessing.queues import Queue as ProcessingQueue
+from multiprocessing import Process, cpu_count, Queue as ProcessingQueue
 from typing import Optional, Type
 
 
 class WorkerQuit(BaseException):
     pass
+
+def safe_call(obj, mtdname):
+    if hasattr(obj, mtdname):
+        getattr(obj, mtdname)()
+
+def close_queues(queues):
+    for q in queues:
+        safe_call(q, 'close')
+    for q in queues:
+        safe_call(q, 'cancel_join_thread')
+    for q in queues:
+        safe_call(q, 'oin_thread')
+
 
 
 class ProducerThread(Thread):
@@ -36,6 +48,8 @@ class ProducerThread(Thread):
                         break
                     except Full:
                         pass
+            for _ in range(len(self.workers)):
+                in_q.put(None)
         except WorkerQuit:
             pass
         except Exception as exc:
@@ -46,9 +60,9 @@ class ProducerThread(Thread):
 
     def ask_quit(self, reason=None):
         self.asked_to_quit = True
-        self._signal_workers_to_quit()
+        self._signal_workers_to_quit(reason)
 
-    def _signal_workers_to_quit(self):
+    def _signal_workers_to_quit(self, reason):
         for worker in self.workers:
             worker.interrupt(reason)
 
@@ -63,9 +77,10 @@ class SourceFromProducerInWorker(Source):
         while True:
             self.owner._check_interrupt()
             try:
-                obj = in_q.get(timeout=poll_interval)
-                if obj is not None:
-                    yield obj
+                precord = in_q.get(timeout=poll_interval)
+                if precord is None: # met sentinel, which is the same as EOF. quit.
+                    break
+                yield precord
             except Empty:
                 pass
 
@@ -98,7 +113,7 @@ class Worker:
         target_chain = SourceFromProducerInWorker(self) >> self.target_chain
 
         try:
-            for precord in target_chain.execute(our):
+            for precord in target_chain.execute(self.our):
                 while True:
                     self._check_interrupt()
                     try:
@@ -106,10 +121,11 @@ class Worker:
                         break
                     except Full:
                         pass
+
         except WorkerQuit:
             self._notify_parent_done()
         except Exception as exc:
-            self.error_logger("Error raised in {}".format(name))
+            self.error_logger("Error raised in {}".format(self.name))
             self._ask_parent_raise(exc)
         finally:
             self._notify_parent_done()
@@ -153,7 +169,8 @@ class base_fork_join(pipe):
     def __init__(self,
                  target_chain: PipeChain,
                  num_workers=None,
-                 chunk_size=1,
+                 chunk_size=200,
+                 queue_size=1,
                  ignore_error=False,
                  poll_interval=2.0,
                  error_logger=logging.error):
@@ -166,13 +183,19 @@ class base_fork_join(pipe):
         self.poll_interval = poll_interval
         self.error_logger = error_logger
 
+    @property
+    def _real_queue_size(self):
+        # chunk_size + the number of sentinels
+        return 2 * self.num_workers + self.num_workers
+
     def _run_workers(self, our):
-        in_q, out_q = self.queue_class(self.chunk_size), self.queue_class(self.chunk_size)
+        in_q, out_q = self.queue_class(self._real_queue_size), self.queue_class(self._real_queue_size)
         workers = []
         for index in range(self.num_workers):
             name = self.get_worker_name(index)
             workers.append(
                 Worker(
+                    poll_interval=self.poll_interval,
                     ignore_error=self.ignore_error,
                     error_logger=self.error_logger,
                     target_chain=self.target_chain,
@@ -190,7 +213,7 @@ class base_fork_join(pipe):
             process = self.process_class(target=worker.run, daemon=True)
             process.start()
             processes.append(process)
-        return workers, in_q, out_q
+        return workers, processes, in_q, out_q
 
     def _run_producer(self, precords, workers, in_q):
         producer = ProducerThread(self.poll_interval, in_q, precords, workers)
@@ -199,7 +222,7 @@ class base_fork_join(pipe):
 
     def _run_consumer(self, workers, out_q):
         workers_not_done = set(workers)
-        while workers_not_done:
+        while workers_not_done or not out_q.empty():
             precord = out_q.get()
             if precord is not None:
                 yield precord
@@ -210,17 +233,27 @@ class base_fork_join(pipe):
                         done_workers.add(worker)
                 workers_not_done -= done_workers
 
-        if producer_exception is not None:
-            raise producer_exception
-
     def transform(self, our, precords):
         # [ producer thread ] => [ worker threads/processes ] => [ consumer(this thread) ]
-        workers, in_q, out_q = self._run_workers(our)
+        workers, processes, in_q, out_q = self._run_workers(our)
         producer = self._run_producer(precords, workers, in_q)
         try:
             yield from self._run_consumer(workers, out_q)
         finally:
             producer.ask_quit()
+            # let's not make zombie processes.
+            for proc in processes:
+                proc.join()
+
+
+            # close all queues if possible
+            queues = (
+                [in_q, out_q] +
+                [worker.ctl_in_q for worker in workers] +
+                [worker.ctl_out_q for worker in workers]
+            )
+            close_queues(queues)
+
 
         if producer.raised_exception is not None:
             raise producer.raised_exception

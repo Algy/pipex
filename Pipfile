@@ -13,6 +13,7 @@ pytest = "*"
 pytest-cov = "*"
 pytest-mock = "*"
 mypy = "*"
+psutil = "*"
 
 [requires]
 python_version = "3.6"
