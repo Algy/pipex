@@ -1,3 +1,5 @@
+import inspect
+
 from .pdatastructures import PRecord
 from functools import reduce
 from typing import List, Iterator, Any, cast, Union, Optional
@@ -7,6 +9,8 @@ from hashlib import sha1
 def _ensure_hash(obj: Any):
     if hasattr(obj, "chain_hash"):
         return obj.chain_hash()
+    elif inspect.isfunction(obj):
+        return obj.__module__ + '.' + obj.__name__
     else:
         return str(obj)
 
@@ -70,7 +74,7 @@ class PipeChain:
         return self.parse_chain(chains)
 
     def chain_hash(self) -> str:
-        raise NotImplementedError
+        raise NotImplementedError("chain_hash is not implemented in {!r}".format(self.__class__))
 
     def __bool__(self):
         return True
@@ -78,8 +82,11 @@ class PipeChain:
     def execute(self, our: We) -> Iterator[PRecord]:
         raise NotImplementedError
 
+    def rewriting_required(self, our) -> bool:
+        return False
+
     def do(self):
-        for _ in self.execute({}):
+        for _ in self.execute(We.default_value()):
             pass
 
     def flatten_chains(self, results: List[Union["PipeChain", str]]):
@@ -213,7 +220,7 @@ class Source(PipeChain):
     def generate_precords(self, our: We) -> Iterator[PRecord]:
         raise NotImplementedError
 
-    def fetch_source_data_version(self) -> SourceDataVersion:
+    def fetch_source_data_version(self, our: We) -> SourceDataVersion:
         return SourceDataVersion()
 
 
@@ -280,13 +287,10 @@ class Sink(PipeChain):
         else:
             return NotImplemented
 
-    def execute(self, our: We):
-        return iter(())
-
     def process(self, our: We, tr_source: "TransformedSource") -> Iterator[PRecord]:
         raise NotImplementedError
 
-    def get_sink_data_version(self) -> SinkDataVersion:
+    def fetch_sink_data_version(self, our: We) -> SinkDataVersion:
         return SinkDataVersion()
 
 
@@ -309,6 +313,14 @@ class ListSourceSink(Source, Sink):
         for precord in tr_source.generate_precords(our):
             dest_list.append(precord)
             yield precord
+
+    def fetch_source_data_version(self, our) -> SourceDataVersion:
+        try:
+            h = str(hash(tuple(self.dest_list)))
+            return SourceDataVersion(data_hash=h)
+        except TypeError:
+            return super().fetch_source_data_version(our)
+
 
 
 class IterSource(Source):
@@ -357,7 +369,6 @@ class TransformedSource(Source):
         results.append(">>")
         self.transformer.flatten_chains(results)
 
-
     def chain_hash(self) -> str:
         return pipex_hash("TransformedSource", self.source, self.transformer)
 
@@ -366,6 +377,9 @@ class TransformedSource(Source):
 
     def generate_precords(self, our: We) -> Iterator[PRecord]:
         return self.transformer.transform(our, self.source.generate_precords(our))
+
+    def execute(self, our: We) -> Iterator[PRecord]:
+        return self.transformer.transform(our, self.source.execute(our))
 
     def __repr__(self):
         return "{!r} >> ({!r})".format(self.source, self.transformer)
@@ -397,7 +411,7 @@ class TransformedSink(Source, Sink):
         return "({!r}) >> {!r}".format(self.transformer, self.sink)
 
     def execute(self, our: We):
-        return iter(())
+        return self.execute(our)
 
 
 class Pipeline(Source):
@@ -405,10 +419,34 @@ class Pipeline(Source):
         self.transformed_source = transformed_source
         self.sink = sink
 
+    def fetch_source_data_version(self, our: We) -> SourceDataVersion:
+        if isinstance(self.sink, Source):
+            return self.sink.fetch_source_data_version(our)
+        else:
+            return super().fetch_source_data_version(our)
+
     def flatten_chains(self, results: List[Union["PipeChain", str]]):
         self.transformed_source.flatten_chains(results)
         results.append(">>")
         self.sink.flatten_chains(results)
+
+    def rewriting_required(self, our: We):
+        sink_data_version = self.sink.fetch_sink_data_version(our)
+        source_data_hash = self.source.fetch_source_data_version(our).data_hash
+        transformer_chain_hash = self.transformer.chain_hash()
+
+        direct_source_changed = (
+            source_data_hash is None or
+            sink_data_version.source_data_hash != source_data_hash
+        )
+        transformer_changed = (
+            sink_data_version.source_chain_hash != transformer_chain_hash
+        )
+        return (
+            transformer_changed or
+            direct_source_changed or
+            self.source.rewriting_required(our)
+        )
 
     @property
     def source(self):

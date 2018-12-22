@@ -12,10 +12,9 @@ from os.path import isfile, isdir, join
 from typing import Tuple, Iterator, Optional, Any, Dict, List
 from hashlib import sha1
 from PIL import Image
-from uuid import uuid4
 
 from ..pdatastructures import PAtom, PRecord
-from ..pbase import Source, Sink, SourceDataVersion, SinkDataVersion, TransformedSource
+from ..pbase import Source, Sink, SourceDataVersion, SinkDataVersion
 from functools import total_ordering
 
 from .pbucket_metadata import PBucketMetadata, PBucketVersion
@@ -188,33 +187,39 @@ class PBucket(Source, Sink):
             self._flush_metadata(metadata)
             self._last_flush_time = now
 
-    def process(self, our, tr_source: TransformedSource) -> Iterator[PRecord]:
+    def _save(self, tr_source):
+        if hasattr(tr_source.source, 'get_storage_version_info'):
+            source_version_info = tr_source.source.get_storage_version_info()
+            my_version_info = self.get_source_version_info()
+
+            if source_version_info.get_source_chain_hash() == tr_source.transformer.chain_hash():
+                # Transformer has changed
+                return 'all'
+            elif source_version_info.get_source_version() > my_version_info.get_source_version():
+                # Version of storage has increased
+                return 'all'
+            elif source_version_info.get_latest_record_timestamp() > my_version_info.get_latest_record_timestamp():
+                ...
+
+        else:
+            return 'all'
+
+    def process(self, our, tr_source: "TransformedSource") -> Iterator[PRecord]:
         self._dir_check_cache = {}
         self._ensure_pbucket_dir()
         metadata = self._load_metadata()
 
-        pipeline = tr_source.with_sink(self)
-        if pipeline.rewriting_required(our):
-            return self._process_rewrite(our, metadata, pipeline, tr_source)
-        else:
-            self.logger.info("Upstream not modified. Skip writing.")
-            return self.generate_precords(our)
-
-    def _process_rewrite(self, our, metadata, pipeline, tr_source):
-        source_data_hash = pipeline.source.fetch_source_data_version(our).data_hash
-        source_chain_hash = pipeline.transformer.chain_hash()
-        self.logger.info("Start Rewriting: {!r}".format(pipeline))
         try:
             if self.use_batch:
                 if self.batch_size is None:
                     # full batch
-                    for precord in tr_source.execute(our):
+                    for precord in tr_source.generate_precords(our):
                         self._save_precord_with_flush(precord, metadata)
                     yield from self.generate_precords(our)
                 else:
                     # mini batch
                     mini_batch = []
-                    for index, precord in enumerate(tr_source.execute(our)):
+                    for index, precord in enumerate(tr_source.generate_precords(our)):
                         self._save_precord_with_flush(precord, metadata)
                         mini_batch.append(precord)
                         if (index + 1) % self.batch_size:
@@ -225,20 +230,16 @@ class PBucket(Source, Sink):
                         mini_batch.clear()
             else:
                 # stream
-                for precord in tr_source.execute(our):
+                for precord in tr_source.generate_precords(our):
                     self._save_precord_with_flush(precord, metadata)
                     yield precord
         finally:
-            last_source_data_hash = pipeline.source.fetch_source_data_version(our).data_hash
-            metadata.source_data_hash = last_source_data_hash
-            metadata.source_chain_hash = source_chain_hash
-            metadata.data_hash = str(uuid4())
             self._flush_metadata(metadata)
 
-    def fetch_source_data_version(self, our) -> SourceDataVersion:
+    def fetch_source_data_version(self) -> SourceDataVersion:
         return self._load_metadata().fetch_source_data_version()
 
-    def fetch_sink_data_version(self, our) -> SinkDataVersion:
+    def fetch_sink_data_version(self) -> SinkDataVersion:
         return self._load_metadata().fetch_sink_data_version()
 
     def _load_metadata(self):

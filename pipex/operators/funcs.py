@@ -1,10 +1,10 @@
 import random
 
+from ..pbase import pipex_hash
 from ..pdatastructures import PRecord
 from ..poperators import pipe, pipe_map, sink
 
 from typing import Iterator
-
 from itertools import islice
 
 class done(sink):
@@ -94,6 +94,9 @@ class base_curriable(pipe_map):
         except ValueError:
             self.arg_position = 0
         self._curried_fn = self._curried()
+
+    def chain_hash(self):
+        return self.fn.__module__ + "." + self.fn.__name__ + pipex_hash("args", self.args, self.kwargs)
 
     def _curried(self):
         if self.arg_position == 0:

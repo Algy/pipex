@@ -14,7 +14,7 @@ class PStorage:
         self.base_dir = base_dir
 
     def bucket(self, name,
-               use_batch: bool = False,
+               use_batch: bool = True,
                batch_size: Optional[int] = None,
                flush_interval: float = 1.0,
               ) -> PBucket:

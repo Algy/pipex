@@ -5,16 +5,18 @@ from .pbase import Source, Transformer, Sink, pipex_hash
 from typing import Iterator, Any
 
 
-class AutoChainHashMixin:
-    pass_through = False
-    def chain_hash(self):
-        if self.pass_through:
-            return ''
-        cls = self.__class__
-        return pipex_hash(
-            cls.__module__ + "." + cls.__name__,
-            *[segment for pair in self.__dict__.items() for segment in pair]
-        )
+def chain_hash(self):
+    if getattr(self, 'pass_through', False):
+        return ''
+    cls = self.__class__
+    return pipex_hash(
+        cls.__module__ + "." + cls.__name__,
+        *[
+            segment
+            for pair in sorted(self.__dict__.items(), key=lambda item: item[0])
+            for segment in pair
+        ]
+    )
 
 SOURCE_MEMBERS = set(name for name, _ in inspect.getmembers(Source) if not name.startswith("_"))
 TRANSFORMER_MEMBERS = set(name for name, _ in inspect.getmembers(Transformer) if not name.startswith("_"))
@@ -44,7 +46,7 @@ class SinkMeta(BaseMeta, Sink):
         return cls().process(our, precords)
 
 
-class source(Source, AutoChainHashMixin, metaclass=SourceMeta):
+class source(Source, metaclass=SourceMeta):
     channel_name = 'default'
 
     def generate(self) -> Iterator[Any]:
@@ -54,8 +56,10 @@ class source(Source, AutoChainHashMixin, metaclass=SourceMeta):
         for object in self.generate():
             yield PRecord.from_object(object, self.channel_name)
 
+    def chain_hash(self):
+        return chain_hash(self)
 
-class pipe(Transformer, AutoChainHashMixin, metaclass=TransformerMeta):
+class pipe(Transformer, metaclass=TransformerMeta):
     def transform(self, our, precords: Iterator[PRecord]) -> Iterator[PRecord]:
         raise NotImplementedError
 
@@ -65,6 +69,9 @@ class pipe(Transformer, AutoChainHashMixin, metaclass=TransformerMeta):
             return cls.__module__.replace(".operators.funcs", "") + "." + cls.__name__
         else:
             return cls.__module__ + "." + cls.__name__
+
+    def chain_hash(self):
+        return chain_hash(self)
 
 
 class pipe_map(pipe):
@@ -83,7 +90,7 @@ class pipe_map(pipe):
             yield precord.with_value(new_value)
 
 
-class sink(Sink, AutoChainHashMixin, metaclass=SinkMeta):
+class sink(Sink, metaclass=SinkMeta):
     def save(self, obj: Any):
         raise NotImplementedError
 
@@ -91,3 +98,6 @@ class sink(Sink, AutoChainHashMixin, metaclass=SinkMeta):
         for precord in tr_source.generate_precords(our):
             self.save(precord.value)
             yield precord
+
+    def chain_hash(self):
+        return chain_hash(self)

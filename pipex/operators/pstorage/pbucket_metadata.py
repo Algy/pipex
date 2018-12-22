@@ -43,7 +43,7 @@ class PBucketMetadata:
     def fetch_source_data_version(self) -> SourceDataVersion:
         return SourceDataVersion(data_hash=self.data_hash)
 
-    def fetch_sink_data_version(self) -> SinkDataVersion:
+    def fetrch_sink_data_version(self) -> SinkDataVersion:
         return SinkDataVersion(
             source_data_hash=self.source_data_hash,
             source_chain_hash=self.source_chain_hash,
