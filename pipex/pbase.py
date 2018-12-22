@@ -270,6 +270,9 @@ class TransformerSequence(Transformer):
                 results.append("|")
             tr.flatten_chains(results)
 
+    def chain_hash(self):
+        return pipex_hash("TransformerSequence", *self.transformers)
+
     def __repr__(self):
         return " | ".join(repr(transformer) for transformer in self.transformers)
 
