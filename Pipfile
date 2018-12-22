@@ -17,6 +17,8 @@ psutil = "*"
 pytest-profiling = "*"
 snakeviz = "*"
 tesserocr = "*"
+imgaug = "*"
+opencv-python = "*"
 
 [requires]
 python_version = "3.6"

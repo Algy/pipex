@@ -60,9 +60,8 @@ class frames(pipe):
 
     def transform(self, our, precords):
         for precord in precords:
-            for arr in self.get_frames(precord.value):
-                yield precord.with_channel_item("image_frame", arr)
-
+            for i, arr in enumerate(self.get_frames(precord.value)):
+                yield precord.with_channel_item("image_frame", arr).with_id(str(i))
 
 class select_key_frame(pipe):
     pass

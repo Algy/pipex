@@ -7,6 +7,7 @@ from functools import lru_cache
 from typing import Dict, Any
 from html import escape
 
+id_func = id
 
 def repr_image(value):
     buffer = value._repr_png_()
@@ -214,9 +215,9 @@ class PRecord:
         )
 
     @classmethod
-    def from_object(cls, obj, channel_name='default'):
+    def from_object(cls, obj, channel_name='default', id=None):
         return cls(
-            id=str(id(obj)),
+            id=id or str(id_func(obj)),
             timestamp=time.time(),
             active_channel=channel_name,
             channel_atoms={
