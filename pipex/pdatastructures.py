@@ -3,7 +3,6 @@ import numpy as np
 
 from PIL import Image
 from base64 import b64encode
-from functools import lru_cache
 from typing import Dict, Any
 from html import escape
 
@@ -98,7 +97,7 @@ class PAtom:
         self.format = format
 
 class PRecord:
-    __slots__ = ('id', 'timestamp', 'active_channel', 'channel_atoms')
+    __slots__ = ('id', 'timestamp', 'active_channel', 'channel_atoms', '_value')
     def __init__(self, *,
                  id: str,
                  timestamp: float = None,
@@ -114,15 +113,19 @@ class PRecord:
         return self.channel_atoms.get(self.active_channel)
 
     @property
-    @lru_cache(None)
     def value(self):
-        atom = self.atom
-        if atom is None:
-            return None
-        return atom.value
+        try:
+            return self._value
+        except AttributeError:
+            atom = self.atom
+            if atom is None:
+                value = None
+            else:
+                value = atom.value
+            self._value = value
+            return value
 
     @property
-    @lru_cache(None)
     def value_format(self):
         atom = self.atom
         if atom is None:
