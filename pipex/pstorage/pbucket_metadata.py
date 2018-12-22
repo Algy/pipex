@@ -1,16 +1,8 @@
 from typing import Tuple, Optional, List
 from functools import total_ordering
 
+from ..pbase import SourceDataVersion, SinkDataVersion
 
-class StorageVersionInfo:
-    def get_source_chain_hash(self):
-        raise NotImplementedError
-
-    def get_source_version(self):
-        raise NotImplementedError
-
-    def get_latest_record_timestamp(self):
-        raise NotImplementedError
 
 @total_ordering
 class PBucketVersion:
@@ -35,31 +27,34 @@ class PBucketVersion:
 
 
 
-class PBucketMetadata(StorageVersionInfo):
+class PBucketMetadata:
     def __init__(self, *,
                  meta_version: PBucketVersion,
+                 data_hash: Optional[str],
                  source_chain_hash: Optional[str],
-                 source_version: int,
+                 source_data_hash: Optional[str],
                  latest_record_timestamp: int):
         self.meta_version = meta_version
         self.source_chain_hash = source_chain_hash
-        self.source_version = source_version
+        self.source_data_hash = source_data_hash
+        self.data_hash = data_hash
         self.latest_record_timestamp = latest_record_timestamp
 
-    def get_source_chain_hash(self):
-        return self.source_chain_hash
+    def fetch_source_data_version(self) -> SourceDataVersion:
+        return SourceDataVersion(data_hash=self.data_hash)
 
-    def get_source_version(self):
-        return self.source_version
-
-    def get_latest_record_timestamp(self):
-        return self.latest_record_timestamp
+    def fetrch_sink_data_version(self) -> SinkDataVersion:
+        return SinkDataVersion(
+            source_data_hash=self.source_data_hash,
+            source_chain_hash=self.source_chain_hash,
+        )
 
     def to_json(self):
         return {
             'meta_version': str(self.meta_version),
             'source_chain_hash': self.source_chain_hash,
-            'source_version': self.source_version,
+            'source_data_hash': self.source_data_hash,
+            'data_hash': self.data_hash,
             'latest_record_timestamp': self.latest_record_timestamp,
         }
 
@@ -68,7 +63,8 @@ class PBucketMetadata(StorageVersionInfo):
         return cls(
             meta_version=PBucketVersion.parse(data['meta_version']),
             source_chain_hash=data['source_chain_hash'],
-            source_version=data['source_version'],
+            source_data_hash=data['source_data_hash'],
+            data_hash=data['data_hash'],
             latest_record_timestamp=data['latest_record_timestamp'],
         )
 
@@ -78,12 +74,12 @@ class PBucketMetadata(StorageVersionInfo):
         return cls(
             meta_version=meta_version,
             source_chain_hash=None,
-            source_version=1,
+            source_data_hash=None,
+            data_hash=None,
             latest_record_timestamp=0,
         )
 
 __all__ = (
     "PBucketVersion",
     "PBucketMetadata",
-    "StorageVersionInfo",
 )

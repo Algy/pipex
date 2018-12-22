@@ -14,10 +14,10 @@ from hashlib import sha1
 from PIL import Image
 
 from ..pdatastructures import PAtom, PRecord
-from ..pbase import Source, Sink
+from ..pbase import Source, Sink, SourceDataVersion, SinkDataVersion
 from functools import total_ordering
 
-from .pbucket_metadata import PBucketMetadata, PBucketVersion, StorageVersionInfo
+from .pbucket_metadata import PBucketMetadata, PBucketVersion
 
 
 class PBucket(Source, Sink):
@@ -66,9 +66,6 @@ class PBucket(Source, Sink):
     @property
     def data_directory_name(self):
         return self.get_sub_dir('data')
-
-    def get_storage_version_info(self) -> StorageVersionInfo:
-        return self._load_metadata()
 
     # load
     def generate_precords(self, our) -> Iterator[PRecord]:
@@ -239,6 +236,11 @@ class PBucket(Source, Sink):
         finally:
             self._flush_metadata(metadata)
 
+    def fetch_source_data_version(self) -> SourceDataVersion:
+        return self._load_metadata().fetch_source_data_version()
+
+    def fetch_sink_data_version(self) -> SinkDataVersion:
+        return self._load_metadata().fetch_sink_data_version()
 
     def _load_metadata(self):
         meta_name = self.meta_name

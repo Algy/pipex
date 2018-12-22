@@ -1,6 +1,6 @@
 from .pdatastructures import PRecord
 from functools import reduce
-from typing import List, Iterator, Any, cast, Union
+from typing import List, Iterator, Any, cast, Union, Optional
 
 from hashlib import sha1
 
@@ -19,6 +19,29 @@ class We:
     @classmethod
     def default_value(cls) -> "We":
         return cls()
+
+
+class SourceDataVersion:
+    def __init__(self, *, data_hash: Optional[str] = None):
+        self.data_hash = data_hash
+
+    def __repr__(self):
+        return "<SourceDataVersion data_hash={!r}>".format(self.data_hash)
+
+
+class SinkDataVersion:
+    def __init__(self, *,
+                 source_data_hash: Optional[str] = None,
+                 source_chain_hash: Optional[str] = None):
+        self.source_data_hash = source_data_hash
+        self.source_chain_hash = source_chain_hash
+
+    def __repr__(self):
+        return (
+            "<SinkDataVersion source_chain_hash={!r} source_data_hash={!r}>"
+            .format(self.source_chain_hash, self.source_data_hash)
+        )
+
 
 
 # NOTE: All descendants of PipeChain should be designed to be immutable
@@ -190,6 +213,9 @@ class Source(PipeChain):
     def generate_precords(self, our: We) -> Iterator[PRecord]:
         raise NotImplementedError
 
+    def fetch_source_data_version(self) -> SourceDataVersion:
+        return SourceDataVersion()
+
 
 class Transformer(PipeChain):
     def transform(self, our: We, precords: Iterator[PRecord]) -> Iterator[PRecord]:
@@ -260,6 +286,8 @@ class Sink(PipeChain):
     def process(self, our: We, tr_source: "TransformedSource") -> Iterator[PRecord]:
         raise NotImplementedError
 
+    def get_sink_data_version(self) -> SinkDataVersion:
+        return SinkDataVersion()
 
 
 class ListSourceSink(Source, Sink):
