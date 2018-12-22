@@ -75,7 +75,7 @@ augmenter_example = iaa.Sequential(
 
 
 
-class augument(pipe):
+class augment(pipe):
     def __init__(self, augmenter=augmenter_example, multiplier=20,
                  remove_out_of_image='partly'):
         self.augmenter = augmenter
