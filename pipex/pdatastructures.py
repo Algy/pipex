@@ -27,13 +27,17 @@ def repr_atom(atom) -> str:
     return "<pre>" + escape(repr(atom.value)) + "</pre>"
 
 def repr_channel(channel_name, atom, is_active) -> str:
-    content = repr_atom(atom)
+    if atom is not None:
+        content = repr_atom(atom)
+    else:
+        content = escape(repr(atom))
+
     return """
     <tr>
         <th>{}{}</th>
         <td>{}</td>
     </tr>
-    """.format(channel_name, "*" if is_active else "", repr_atom(atom))
+    """.format(channel_name, "*" if is_active else "", content)
 
 def _repr_html_(self):
     channels = [self.active_channel]+ [chan for chan in self.channels if chan != self.active_channel]
