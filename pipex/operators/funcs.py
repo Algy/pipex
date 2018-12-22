@@ -121,6 +121,11 @@ class map(base_curriable):
     def map(self, value):
         return self._curried_fn(value)
 
+class map_precord(base_curriable):
+    def transform(self, our, precords):
+        for precord in precords:
+            yield self._curried_fn(precord)
+
 
 class channel_map(base_curriable):
     def __init__(self, channel_name: str, fn, *args, **kwargs):
@@ -203,6 +208,6 @@ class select_channels(pipe):
 __all__ = (
     'done', 'constant', 'tap', 'channel', 'dup', 'preload',
     'batch', 'unbatch', 'base_curriable',
-    'map', 'channel_map', 'filter', 'slice', 'grep',
+    'map', 'map_precord', 'channel_map', 'filter', 'slice', 'grep',
     'take', 'drop', 'shuffle', 'select_channels',
 )

@@ -242,6 +242,7 @@ class PBucket(Source, Sink):
         return self._load_metadata().fetch_sink_data_version()
 
     def _load_metadata(self):
+        self._ensure_pbucket_dir()
         meta_name = self.meta_name
         with open(meta_name) as f:
             data = json.load(f)
