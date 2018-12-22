@@ -101,11 +101,11 @@ class PRecord:
     __slots__ = ('id', 'timestamp', 'active_channel', 'channel_atoms')
     def __init__(self, *,
                  id: str,
-                 timestamp: float,
+                 timestamp: float = None,
                  active_channel: str = 'default',
                  channel_atoms: Dict[str, PAtom] = None):
         self.id = id
-        self.timestamp = timestamp
+        self.timestamp = timestamp or time.time()
         self.active_channel = active_channel
         self.channel_atoms = channel_atoms or {}
 
