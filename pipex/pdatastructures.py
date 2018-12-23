@@ -57,6 +57,7 @@ def _repr_html_(self):
     }
 </style>
 <table border="1" class="dataframe" style="width: 100%; table-layout: auto">
+  <caption>[[TARGET_CAPTION]]</caption>
   <thead>
     <tr style="text-align: right;">
       <th>channel</th>
@@ -64,7 +65,7 @@ def _repr_html_(self):
     </tr>
   </thead>
   <tbody>
-'''
+'''.replace("[[TARGET_CAPTION]]", escape(self.id))
     epilogue = '''
   </tbody>
 </table>
