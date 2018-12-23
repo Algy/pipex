@@ -1,13 +1,29 @@
 import time
 import logging
 
-from typing import Iterator, Tuple, Optional
+from typing import Iterator, Tuple, Optional, Iterable
 from contextlib import contextmanager
 from uuid import uuid4
 
 from ..bucket_metadata import BucketMetadata
 from ...pbase import Source, Sink, SourceDataVersion, SinkDataVersion, TransformedSource, Pipeline
 from ...pdatastructures import PRecord
+from ...poperators import source
+
+
+class BucketWithIds(source):
+    def __init__(self, bucket: "Bucket", ids: Iterable[str]):
+        self.bucket = bucket
+        self.ids = ids
+
+    def generate_precords(self, our)-> Iterator[PRecord]:
+        bucket = self.bucket
+        with bucket.read_context():
+            for id in self.ids:
+                precord = bucket.load_precord(our, id)
+                if precord is None:
+                    continue
+                yield precord
 
 
 class Bucket(Source, Sink):
@@ -23,6 +39,9 @@ class Bucket(Source, Sink):
         self.flush_interval = flush_interval
         self.logger = logging.getLogger("{}({!r}, {!r})".format(self.__class__.__name__, self.storage, self.scope))
         self._last_flush_time = None
+
+    def with_ids(self, ids: Iterable[str]) -> Source:
+        return BucketWithIds(self, ids)
 
     def load_metadata(self, our) -> BucketMetadata:
         raise NotImplementedError

@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 
-from pipex import PStorage, channel_map, map, source
+from pipex import PStorage, channel_map, map, source, PRecord
 
 def test_pstorage():
     storage = PStorage("/tmp")
@@ -44,3 +44,16 @@ def test_pbucket_skipping(mocker):
     pl.do()
     # should skip
     assert test_source.counter == 1
+
+def test_p_for_specific_ids():
+    storage = PStorage("/tmp")
+    bucket = storage['pipex_test/test_pstorage_3']
+
+    precords = [
+        PRecord.from_object(1, 'default', "id_1"),
+        PRecord.from_object(2, 'default', "id_2"),
+        PRecord.from_object(3, 'default', "id_3"),
+    ]
+    (precords >> bucket).do()
+    assert list((bucket.with_ids(["id_2", "id_3"]) >> map(lambda x: x + 1)).values()) == [3, 4]
+    assert list(bucket.with_ids(["id_999"])) == []

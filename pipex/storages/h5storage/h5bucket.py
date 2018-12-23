@@ -28,7 +28,10 @@ class H5Bucket(Bucket):
         return self._h5file.keys()
 
     def load_precord(self, our, id: str):
-        group = self._h5file[id]
+        try:
+            group = self._h5file[id]
+        except KeyError:
+            return None
         active_channel = group.attrs.get('active_channel', 'unknown')
         timestamp = group.attrs.get('timestamp')
         channel_atoms = {}

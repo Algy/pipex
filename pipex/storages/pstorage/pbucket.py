@@ -58,9 +58,6 @@ class PBucket(Bucket):
                 continue
             yield id_str
 
-    def load_precord(self, our, id: str):
-        self._ensure_pbucket_dir(our)
-
     def load_metadata(self, our) -> BucketMetadata:
         self._ensure_pbucket_dir(our)
         meta_name = self.meta_name
@@ -86,8 +83,11 @@ class PBucket(Bucket):
     def load_precord(self, our, id: str):
         data_directory_name = self.data_directory_name
         file_name = join(data_directory_name, id + ".json")
-        with open(file_name) as f:
-            d = json.load(f)
+        try:
+            with open(file_name) as f:
+                d = json.load(f)
+        except FileNotFoundError:
+            return None
         id = d['id']
         active_channel = d['active_channel']
         channel_names = d['channel_names']
