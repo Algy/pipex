@@ -50,7 +50,7 @@ class PBucket(Bucket):
         yield
 
     def load_ids(self, our) -> Iterator[str]:
-        self._ensure_pbucket_dir()
+        self._ensure_pbucket_dir(our)
         directory_name, data_directory_name = self.directory_name, self.data_directory_name
         for file_name in os.listdir(data_directory_name):
             id_str, file_ext = splitext(file_name)
@@ -59,10 +59,10 @@ class PBucket(Bucket):
             yield id_str
 
     def load_precord(self, our, id: str):
-        self._ensure_pbucket_dir()
+        self._ensure_pbucket_dir(our)
 
     def load_metadata(self, our) -> BucketMetadata:
-        self._ensure_pbucket_dir()
+        self._ensure_pbucket_dir(our)
         meta_name = self.meta_name
         with open(meta_name) as f:
             data = json.load(f)
@@ -208,7 +208,7 @@ class PBucket(Bucket):
     def data_directory_name(self):
         return self.get_sub_dir('data')
 
-    def _ensure_pbucket_dir(self):
+    def _ensure_pbucket_dir(self, our):
         directory_name = self.directory_name
         data_directory_name = self.data_directory_name
         meta_name = join(directory_name, "pbucket.json")
@@ -217,7 +217,7 @@ class PBucket(Bucket):
         self._ensure_dir(data_directory_name)
 
         if not isfile(meta_name):
-            self._flush_metadata(BucketMetadata.initial(self.META_VERSION))
+            self.flush_metadata(our, BucketMetadata.initial(self.META_VERSION))
 
     def _ensure_dir(self, name):
         if not isdir(name):
