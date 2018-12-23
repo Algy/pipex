@@ -7,4 +7,4 @@ from . import video
 from . import json
 from . import ext
 
-from .pstorage import *
+from .storages import *

@@ -2,34 +2,12 @@ from typing import Tuple, Optional, List
 from functools import total_ordering
 
 from ..pbase import SourceDataVersion, SinkDataVersion
+from .bucket_version import BucketVersion
 
 
-@total_ordering
-class PBucketVersion:
-    def __init__(self, positions: Tuple[int]):
-        self.positions = positions
-
-    def __str__(self):
-        return ".".join(str(position) for position in self.positions)
-
-    def __lt__(self, other):
-        return self.positions < other.positions
-
-    def __eq__(self, other):
-        return self.positions == other.positions
-
-    def __hash__(self):
-        return hash(self.positions)
-
-    @classmethod
-    def parse(cls, ver: str):
-        return cls(tuple(map(int, ver.split("."))))
-
-
-
-class PBucketMetadata:
+class BucketMetadata:
     def __init__(self, *,
-                 meta_version: PBucketVersion,
+                 meta_version: BucketVersion,
                  data_hash: Optional[str],
                  source_chain_hash: Optional[str],
                  source_data_hash: Optional[str],
@@ -43,7 +21,7 @@ class PBucketMetadata:
     def fetch_source_data_version(self) -> SourceDataVersion:
         return SourceDataVersion(data_hash=self.data_hash)
 
-    def fetrch_sink_data_version(self) -> SinkDataVersion:
+    def fetch_sink_data_version(self) -> SinkDataVersion:
         return SinkDataVersion(
             source_data_hash=self.source_data_hash,
             source_chain_hash=self.source_chain_hash,
@@ -61,7 +39,7 @@ class PBucketMetadata:
     @classmethod
     def from_json(cls, data):
         return cls(
-            meta_version=PBucketVersion.parse(data['meta_version']),
+            meta_version=BucketVersion.parse(data['meta_version']),
             source_chain_hash=data['source_chain_hash'],
             source_data_hash=data['source_data_hash'],
             data_hash=data['data_hash'],
@@ -70,7 +48,7 @@ class PBucketMetadata:
 
 
     @classmethod
-    def initial(cls, meta_version: PBucketVersion):
+    def initial(cls, meta_version: BucketVersion):
         return cls(
             meta_version=meta_version,
             source_chain_hash=None,
@@ -80,6 +58,5 @@ class PBucketMetadata:
         )
 
 __all__ = (
-    "PBucketVersion",
     "PBucketMetadata",
 )
