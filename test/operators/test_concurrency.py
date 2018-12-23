@@ -59,7 +59,7 @@ def test_parallel_errornous_case():
     proc.join()
     num_before = num_child_processes()
     with pytest.raises(ZeroDivisionError):
-        (generate() >> parallel(map(div)) >> arr).do()
+        (generate() >> parallel(map(div), queue_size=1, chunk_size=1) >> arr).do()
     time.sleep(0.1)
     num_after = num_child_processes()
     assert num_before == num_after

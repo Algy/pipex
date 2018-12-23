@@ -3,7 +3,7 @@ import logging
 from ..poperators import pipe
 from ..pbase import PipeChain, Source, Sink, Transformer
 
-from threading import Thread
+from threading import Thread, Lock
 from queue import Queue as ThreadingQueue, Full, Empty
 from multiprocessing import Process, cpu_count, Queue as ProcessingQueue, get_context
 from typing import Optional, Type
@@ -17,7 +17,7 @@ def safe_call(obj, mtdname):
     if hasattr(obj, mtdname):
         getattr(obj, mtdname)()
 
-def close_queues(queues):
+def close_queues(*queues):
     for q in queues:
         safe_call(q, 'close')
     for q in queues:
@@ -39,15 +39,17 @@ def _slice_chunk(precords, chunk_size):
 
 
 class ProducerThread(Thread):
-    def __init__(self, chunk_size, poll_interval, in_q, precords, workers):
+    def __init__(self, chunk_size, poll_interval, in_q, ctl_in_q, precords, workers):
         super().__init__(daemon=True)
         self.chunk_size = chunk_size
         self.poll_interval = poll_interval
         self.in_q = in_q
+        self.ctl_in_q = ctl_in_q
         self.precords = precords
         self.raised_exception = None
         self.workers = workers
         self.asked_to_quit = False
+        self.lock = Lock()
 
 
     def run(self):
@@ -67,7 +69,16 @@ class ProducerThread(Thread):
                         pass
             logger.debug("All precords has been produced! Sending sentinels to workers")
             for _ in range(len(self.workers)):
-                in_q.put(None)
+                while True:
+                    if self.asked_to_quit:
+                        logger.debug("Someone asked me to quit quiting")
+                        raise WorkerQuit
+                    try:
+                        in_q.put(None, timeout=self.poll_interval)
+                        break
+                    except Full:
+                        pass
+
             logger.debug("Sentinels produced!")
         except WorkerQuit:
             logger.debug("Worker Quit!")
@@ -78,12 +89,10 @@ class ProducerThread(Thread):
             self.ask_quit("KeyboardInterrupt")
 
     def ask_quit(self, reason=None):
-        self.asked_to_quit = True
-        self._signal_workers_to_quit(reason)
-
-    def _signal_workers_to_quit(self, reason):
-        for worker in self.workers:
-            worker.interrupt(reason)
+        with self.lock:
+            self.asked_to_quit = True
+        for _ in self.workers:
+            self.ctl_in_q.put(reason or True)
 
 
 class SourceFromProducerInWorker(Source):
@@ -106,11 +115,13 @@ class SourceFromProducerInWorker(Source):
 
 class Worker:
     def __init__(self, *,
+                 index,
                  chunk_size,
                  poll_interval,
                  ignore_error, error_logger,
                  name, our, target_chain,
                  in_q, out_q, ctl_in_q, ctl_out_q):
+        self.index = index
         self.chunk_size = chunk_size
         self.poll_interval = poll_interval
         self.ignore_error = ignore_error
@@ -151,7 +162,7 @@ class Worker:
             self.error_logger("Error raised in {}".format(self.name))
             self._ask_parent_raise(exc)
             raise
-        finally:
+        else:
             self._notify_parent_done()
 
     def _generate(self):
@@ -161,12 +172,11 @@ class Worker:
 
     def _ask_parent_raise(self, exc):
         if not self.ignore_error:
-            print("PUT AERROR")
-            self.ctl_out_q.put((False, exc))
+            self.ctl_out_q.put((False, exc, self.index))
             self.out_q.put(None)
 
     def _notify_parent_done(self):
-        self.ctl_out_q.put((True, None))
+        self.ctl_out_q.put((True, None, self.index))
         self.out_q.put(None)
 
     def _check_interrupt(self):
@@ -175,24 +185,6 @@ class Worker:
             raise WorkerQuit
         except Empty:
             pass
-
-    # should be called by producer or main thread
-    def interrupt(self, reason=None):
-        self.ctl_in_q.put(reason or True)
-
-    # should be called by main thread
-    def pop_done_state(self):
-        if self.is_done:
-            return
-        try:
-            success, exc = self.ctl_out_q.get_nowait()
-            self.is_done = True
-            if not success:
-                # Reraise
-                raise exc
-            return True
-        except Empty:
-            return False
 
 # Fork-Join Model
 class base_fork_join(pipe):
@@ -219,16 +211,17 @@ class base_fork_join(pipe):
 
     @property
     def _real_queue_size(self):
-        # chunk_size + the number of sentinels
-        return self.queue_size * self.num_workers + self.num_workers
+        return self.queue_size
 
     def _run_workers(self, our):
         in_q, out_q = self.queue_class(self._real_queue_size), self.queue_class(self._real_queue_size)
+        ctl_in_q, ctl_out_q = self.queue_class(0), self.queue_class(0)
         workers = []
         for index in range(self.num_workers):
             name = self.get_worker_name(index)
             workers.append(
                 Worker(
+                    index=index,
                     chunk_size=self.chunk_size,
                     poll_interval=self.poll_interval,
                     ignore_error=self.ignore_error,
@@ -238,8 +231,8 @@ class base_fork_join(pipe):
                     our=our,
                     in_q=in_q,
                     out_q=out_q,
-                    ctl_in_q=self.queue_class(0),
-                    ctl_out_q=self.queue_class(0),
+                    ctl_in_q=ctl_in_q,
+                    ctl_out_q=ctl_out_q,
                 )
             )
 
@@ -251,62 +244,80 @@ class base_fork_join(pipe):
             )
             process.start()
             processes.append(process)
-        return workers, processes, in_q, out_q
+        return workers, processes, in_q, out_q, ctl_in_q, ctl_out_q
 
-    def _run_producer(self, precords, workers, in_q):
+    def _run_producer(self, precords, workers, in_q, ctl_in_q):
         producer = ProducerThread(
             self.chunk_size,
             self.poll_interval,
             in_q,
+            ctl_in_q,
             precords,
-            workers
+            workers,
         )
         producer.start()
         return producer
 
-    def _run_consumer(self, workers, out_q):
+    def _pop_done_state(self, workers, ctl_out_q):
+        try:
+            success, exc, index = ctl_out_q.get_nowait()
+            worker = workers[index]
+            worker.is_done = True
+            if not success:
+                # Reraise
+                raise exc
+            return True
+        except Empty:
+            return None
+
+    def _run_consumer(self, workers, out_q, ctl_in_q, ctl_out_q):
         N = len(workers)
         num_done_workers = 0
 
-        while num_done_workers < N or not out_q.empty():
-            precord_chunk = out_q.get()
-            if precord_chunk is not None:
-                yield from precord_chunk
-            else:
-                # flush all queues
-                num_done_workers += 1
-                for worker in workers:
-                    worker.pop_done_state()
-
-        # Flush remaining objects inside the out queue
         try:
-            while True:
-                precord_chunk = out_q.get_nowait()
+            while num_done_workers < N or not out_q.empty():
+                precord_chunk = out_q.get()
                 if precord_chunk is not None:
                     yield from precord_chunk
-        except Empty:
-            pass
+                else:
+                    num_done_workers += 1
+                    self._pop_done_state(workers, ctl_out_q)
+        except Exception:
+            for _ in workers:
+                ctl_in_q.put(True)
+            while num_done_workers < N:
+                precord_chunk = out_q.get()
+                if precord_chunk is None:
+                    num_done_workers += 1
+            raise
+        else:
+            # Flush remaining objects inside the out queue
+            try:
+                while True:
+                    precord_chunk = out_q.get_nowait()
+                    if precord_chunk is not None:
+                        yield from precord_chunk
+            except Empty:
+                pass
+
 
     def transform(self, our, precords):
         # [ producer thread ] => [ worker threads/processes ] => [ consumer(this thread) ]
-        workers, processes, in_q, out_q = self._run_workers(our)
-        producer = self._run_producer(precords, workers, in_q)
+        workers, processes, in_q, out_q, ctl_in_q, ctl_out_q = self._run_workers(our)
+        producer = self._run_producer(precords, workers, in_q, ctl_in_q)
         try:
-            yield from self._run_consumer(workers, out_q)
+            yield from self._run_consumer(workers, out_q, ctl_in_q, ctl_out_q)
         finally:
             producer.ask_quit()
-
-            # close all queues if possible
-            queues = (
-                [in_q, out_q] +
-                [worker.ctl_in_q for worker in workers] +
-                [worker.ctl_out_q for worker in workers]
-            )
-            close_queues(queues)
 
             # let's not make zombie processes.
             for proc in processes:
                 proc.join()
+
+            # close all queues if possible
+            close_queues(in_q, out_q, ctl_in_q, ctl_out_q)
+
+            producer.join()
 
         if producer.raised_exception is not None:
             raise producer.raised_exception
