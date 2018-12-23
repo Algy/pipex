@@ -10,7 +10,7 @@ required = [
 
 setup(
     name="pipex",
-    version="0.0.2",
+    version="0.0.3",
     description="Data Processing With Pipe Syntax",
     author="Alchan Algy Kim",
     author_email="a9413miky@gmail.com",
