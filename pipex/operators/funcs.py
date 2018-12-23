@@ -8,7 +8,7 @@ from typing import Iterator
 from itertools import islice
 
 class done(sink):
-    def save(self, value):
+    def save(self, precord):
         pass
 
 EMPTY = object()

@@ -1,5 +1,8 @@
+import numpy as np
+
 from os.path import splitext, basename
 from ..poperators import pipe, sink
+from PIL import Image
 
 class open(pipe):
     def __init__(self, as_numpy_array=True, file_name_as_id=True, ext_stripped_id=True):
@@ -8,8 +11,6 @@ class open(pipe):
         self.ext_stripped_id = ext_stripped_id
 
     def transform(self, our, precords):
-        import numpy as np
-        from PIL import Image
 
         for precord in precords:
             file_name = precord.value
@@ -31,14 +32,11 @@ class open(pipe):
 
 
 class save(sink):
-    def process(self, our, precords):
-        for precord in precords:
-            from PIL import Image
-            value = precord.value
-            file_name = precord['file_name']
-            if isinstance(value, Image.Image):
-                image = value
-            else:
-                image = Image.fromarray(value)
-            image.save(file_name)
-            yield precord
+    def save(self, precord):
+        value = precord.value
+        file_name = precord['file_name']
+        if isinstance(value, Image.Image):
+            image = value
+        else:
+            image = Image.fromarray(value)
+        image.save(file_name)

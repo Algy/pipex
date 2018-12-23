@@ -1,4 +1,4 @@
-from .poperators import pipe, source, sink, pipe_map
+from .poperators import pipe, source, sink, value_sink, pipe_map
 from .pdatastructures import PRecord, PAtom
 from .operators import *
 

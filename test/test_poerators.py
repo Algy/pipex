@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 
-from pipex.poperators import source, pipe_map, pipe, sink
+from pipex.poperators import source, pipe_map, pipe, sink, value_sink
 from pipex.pdatastructures import PRecord
 
 class one_forever(source):
@@ -10,11 +10,11 @@ class one_forever(source):
             yield 1
 
 
-class set_sink(sink):
+class set_sink(value_sink):
     def __init__(self, set):
         self.set = set
 
-    def save(self, obj):
+    def save_value(self, obj):
         self.set.add(obj)
 
 class one_shot_sink(sink):

@@ -91,13 +91,20 @@ class pipe_map(pipe):
 
 
 class sink(Sink, metaclass=SinkMeta):
-    def save(self, obj: Any):
+    def save(self, precord: PRecord):
         raise NotImplementedError
 
     def process(self, our, tr_source) -> Iterator[PRecord]:
         for precord in tr_source.generate_precords(our):
-            self.save(precord.value)
+            self.save(precord)
             yield precord
 
     def chain_hash(self):
         return chain_hash(self)
+
+class value_sink(sink):
+    def save(self, precord: PRecord):
+        self.save_value(precord.value)
+
+    def save_value(self, precord: PRecord):
+        raise NotImplementedError
