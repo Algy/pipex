@@ -5,14 +5,13 @@ from typing import Iterator, Tuple, Optional
 from contextlib import contextmanager
 from uuid import uuid4
 
-from .storage import Storage
 from ..bucket_metadata import BucketMetadata
 from ...pbase import Source, Sink, SourceDataVersion, SinkDataVersion, TransformedSource, Pipeline
 from ...pdatastructures import PRecord
 
 
 class Bucket(Source, Sink):
-    def __init__(self, storage: Storage,
+    def __init__(self, storage, *,
                  scope: Tuple[str],
                  use_batch: bool,
                  batch_size: Optional[int],
