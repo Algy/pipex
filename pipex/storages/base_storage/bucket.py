@@ -98,7 +98,9 @@ class Bucket(Source, Sink):
                     for precord in tr_source.execute(our):
                         self._save_precord_with_flush(our, precord, metadata)
                         yield precord
-            finally:
+            except:
+                raise
+            else:
                 last_source_data_hash = pipeline.source.fetch_source_data_version(our).data_hash
                 metadata.source_data_hash = last_source_data_hash
                 metadata.source_chain_hash = source_chain_hash
